@@ -1,0 +1,1866 @@
+$#include "mohodoc.h"
+$#include "moholayer.h"
+$#include "meshlayer.h"
+$#include "imagelayer.h"
+$#include "grouplayer.h"
+$#include "bonelayer.h"
+$#include "switchlayer.h"
+$#include "particlelayer.h"
+$#include "mesh3dlayer.h"
+$#include "audiolayer.h"
+$#include "notelayer.h"
+$#include "lm_secureaccess.h"
+$#include "layercomp.h"
+$#include "ss_gradient2.h"
+/* tolua -o pkg_moho.cpp -H pkg_moho.h pkg_moho.lua_pkg */
+
+/*
+	This file is used to auto-generate Lua interfaces.
+	If you make a change to this file, you must run the tolua command like so:
+	In Terminal, go to the 'scripting' folder and type the following command:
+	> python _make_pkg.py
+*/
+
+typedef int				int32;
+typedef unsigned int	uint32;
+typedef float			real;
+
+typedef struct {
+	int32		Font;
+	LM_String	FontName;
+	LM_String	Text;
+	int32		Justification;
+	bool		Fill;
+	bool		Stroke;
+	bool		OneFill;
+	bool		CenterH;
+	rgb_color	LineCol;
+	rgb_color	FillCol;
+	real		LineWidth;
+	int32		Leading;
+	int32		Kerning;
+	bool		MakeLayer;
+	LM_String	BalloonStyle;
+	bool		BalloonFill;
+	bool		BalloonStroke;
+	int32		BalloonSize;
+	real		BalloonLineWidth;
+	rgb_color	BalloonLineCol;
+	rgb_color	BalloonFillCol;
+	bool		BalloonSizeProportional;
+	LM_String	BalloonPoses;
+	int32		TextSize;
+	bool		BalloonFlipV;
+	bool		BalloonFlipH;
+} InsertTextParams;
+
+typedef enum {
+	LAYER_COMP_ACTIVATE,	// make layers in the layer comp visible - adding to existing visible layers
+	LAYER_COMP_DEACTIVATE,	// make layers in the layer comp invisible
+	LAYER_COMP_SET			// make layers in the layer comp visible - all others invisible
+} LayerCompState;
+
+module MOHO { // begin module
+
+/**********************************************************************/
+/*** LM_SecureAccess ***/
+
+class LM_SecureAccess {
+	bool		AddUser();
+	void		RemoveUser();
+};
+
+
+/************************************************************************************/
+/*** Global Variables (most of this stuff is related to user preference settings) ***/
+
+#define MING_VIEW_DIRECTOR
+#define MING_VIEW_CAMERA
+#define MING_VIEW_PANEL
+
+class MohoGlobals {
+	static rgb_color	BackCol;
+	static rgb_color	ElemCol;
+	static rgb_color	SelCol;
+	static rgb_color	InacCol;
+	static rgb_color	FillCol;
+	static rgb_color	LineCol;
+	static rgb_color	GridCol;
+	static rgb_color	CameraShadeCol;
+	static rgb_color	CameraBoundsCol;
+	static rgb_color	GuideCol;
+	static rgb_color	CameraTargetCol;
+
+	static int32		QualityFlags;
+	static bool			NTSCSafe;
+	static bool			HideOffscreen;
+	static int32		PreferredFormat;
+	static bool			ZoomBox;
+	static bool			UseMasterAnimChannel;
+	static bool			ScaleCompensation;
+	static bool			GapFilling;
+	static int32		CurveInterpretation;
+	static int32		ImageSamplingMode;
+	static bool			ConstructionCurvesOn;
+	static InsertTextParams InsertText;
+	static bool			UseSMPTE;
+	static bool			UseDegreesInTimeline;
+	static bool			AutoLockKeys;
+	static bool			AutoNaming;
+	static bool			InlineLayerNaming;
+	static bool			MarkZero;
+	static bool			DisableDrawingToolsNonZero;
+	static bool			DisableAudioFeedback;
+	static int32		DefaultInterp;
+
+	static bool			ShowPlayContolsAndViewSettings;
+	static bool			GridOn;
+	static bool			GridSnapping;
+	static int32		GridSize;
+	static bool			FrameSkipping;
+	static bool			EnableBoneDynamics;
+	static int32		MingViewMode; // 0 director, 1 camera, 2 panel
+	static real			MingSplitWidth;
+	static bool			FBXPreviewMode;
+	static int32		PlayStart;
+	static int32		PlayEnd;
+
+	static int32		ProjWidth;
+	static int32		ProjHeight;
+	static real			ProjFPS;
+	static int32		ProjStart;
+	static int32		ProjEnd;
+	static rgb_color	ProjBackCol;
+	static bool			ProjDofEnabled;
+	static real			ProjDofDistance;
+	static real			ProjDofRange;
+	static real			ProjDofBlur;
+	static bool			ProjEnable3D;
+	static bool			ProjDepthSort;
+	static bool			ProjDistanceSort;
+	static bool			ProjAntialiasing;
+	static int32		ProjNoise;
+	static int32		ProjPixelation;
+	static int32		ProjRenderStyleFill;
+	static int32		ProjRenderStyleLine;
+	static int32		ProjRenderStyleLayer;
+
+	static M_Shape		*NewShapeProperties;
+
+	static real			CharWizLineWidth;
+
+	static bool			MuteSoundtrack;
+	static bool			RescaleSoundtrack;
+
+	static bool			TopStatusBar;
+	static bool			BeginnerMode;
+
+	static bool			EditMultipleKeys;
+	static bool			AutoFreezeKeys;
+	
+	static bool			HighlightSelectedShapes;
+	static bool			SelectedShapeCheckerboard;
+//	static bool			ConfirmRevertDocument;
+};
+
+/**********************************************************************/
+/*** Anim Channels ***/
+
+#define CHANNEL_UNKNOWN
+#define CHANNEL_VAL
+#define CHANNEL_VEC2
+#define CHANNEL_COLOR
+#define CHANNEL_BOOL
+#define CHANNEL_STRING
+#define CHANNEL_VEC3
+
+#define INTERP_LINEAR
+#define INTERP_SMOOTH
+#define INTERP_EASE
+#define INTERP_STEP
+#define INTERP_NOISY
+#define INTERP_CYCLE
+#define INTERP_POSE
+#define INTERP_EASE_IN
+#define INTERP_EASE_OUT
+#define INTERP_BEZIER
+#define INTERP_BOUNCE
+#define INTERP_ELASTIC
+
+#define KEY_SELECTED
+
+// val1 and val2 have specific meanings for different interpolation types
+// INTERP_NOISY - val1 = noise amplitude		val2 = noise scale
+//		good values: 0.1, 0.5
+// INTERP_CYCLE - val1 = relative starting frame (count back this many frames and start again)
+//		val2 = absolute starting frame (count back to exactly this frame, use -1 to ignore this field)
+// INTERP_POSE - val1 = index to the pose
+class InterpSetting {
+	InterpSetting();
+	~InterpSetting();
+	static InterpSetting *new_local();
+
+	void Reset();
+
+	bool IsAdditiveCycle();
+	void SetAdditiveCycle(bool b);
+
+	real BezierOutAngle(int32 component);
+	void SetBezierOutAngle(int32 component, real angle);
+	real BezierInAngle(int32 component);
+	void SetBezierInAngle(int32 component, real angle);
+	
+	real BezierOutPercentage(int32 component);
+	void SetBezierOutPercentage(int32 component, real percent);
+	real BezierInPercentage(int32 component);
+	void SetBezierInPercentage(int32 component, real percent);
+
+	int32	interpMode;
+	real	val1;
+	real	val2;
+	int32	interval; // 1 to interpolate every frame, 2 to animate on 2's, 3 to animate on 3's, etc.
+	int32	hold; // how many frames to hold the previous value before interpolating to the next
+	bool	stagger;
+	int32	tags; // used for keyframe color, and possibly other stuff in the future
+	uint8	flags;
+};
+
+class AnimChannel {
+	int32 ChannelType();
+
+	int32 CountKeys();
+	int32 Duration();
+
+	void Clear(int32 zeroFrame);
+	void ClearAfter(int32 frame);
+	void ClearBefore(int32 frame);
+
+	void Mute(bool b);
+	bool IsMuted();
+
+	void StoreValue();
+	void AddKey(int32 when);
+	void Reset(int32 when);
+
+	bool HasKey(int32 when);
+	int32 GetClosestKeyID(int32 when);
+	void DeleteKey(int32 when);
+	void DeleteKeyByID(int32 id);
+	void SwapKeys(int32 id1, int32 id2);
+
+	int32 GetKeyWhen(int32 id);
+	void SetKeyWhen(int32 id, int32 when);
+	void SetKeyWhenNoRestriction(int32 id, int32 when); // allow keyframes to be set before/after each other, or even on top of each other
+	void MakeKeyframesConsistent(bool deleteDuplicates); // make sure the keyframes are all in order according to time, and remove any that overlap
+
+	void SetKeyInterp(int32 when, int32 interpMode, real val1, real val2);
+	void SetKeyInterpByID(int32 id, int32 interpMode, real val1, real val2);
+	void SetKeyInterp(int32 when, InterpSetting &interp);
+	void SetKeyInterpByID(int32 id, InterpSetting &interp);
+	void GetKeyInterp(int32 when, InterpSetting &interp);
+	void GetKeyInterpByID(int32 id, InterpSetting &interp);
+	void GetKeyInterp(int32 when, int32 *interpMode, real *val1, real *val2);
+	void GetKeyInterpByID(int32 id, int32 *interpMode, real *val1, real *val2);
+	int32 GetKeyInterpMode(int32 when);
+	int32 GetKeyInterpModeByID(int32 id);
+
+	void SetKeySelected(int32 when, bool sel);
+	bool IsKeySelected(int32 when);
+	void SetKeySelectedByID(int32 id, bool sel);
+	bool IsKeySelectedByID(int32 id);
+
+	int32 PoseCount @ CountActions();
+	const char *PoseName @ ActionName(int32 id);
+	const char *ActivePose @ CurrentAction();
+	void SetActivePose @ ActivateAction(const char *name);
+	AnimChannel *Pose @ Action(int32 id);
+	AnimChannel *PoseByName @ ActionByName(const char *name);
+	virtual void InsertPose @ InsertAction(const char *name, int32 when);
+	void InsertPoseByReference @ InsertActionByReference(const char *name, int32 when);
+};
+
+class AnimVal : public AnimChannel {
+	void SetValue(int32 when, real val);
+	real GetValue(int32 when);
+	
+	void SetValueByID(int32 id, real val);
+	real GetValueByID(int32 id);
+
+	real	value;
+};
+
+class AnimVec2 : public AnimChannel {
+	void SetValue(int32 when, LM_Vector2 val);
+	LM_Vector2 GetValue(int32 when);
+	
+	void SetValueByID(int32 id, LM_Vector2 val);
+	LM_Vector2 GetValueByID(int32 id);
+
+	void SplitDimensions(bool b);
+	bool AreDimensionsSplit();
+	void SyncSplitDimensionsBack();
+	AnimVal *DimensionChannel(int32 dim); // 0:X 1:Y
+
+	LM_Vector2	value;
+};
+
+class AnimColor : public AnimChannel {
+	void SetValue(int32 when, LM_ColorVector val);
+	void SetValue(int32 when, rgb_color val);
+	LM_ColorVector GetValue(int32 when);
+	
+	void SetValueByID(int32 id, LM_ColorVector val);
+	void SetValueByID(int32 id, rgb_color val);
+	LM_ColorVector GetValueByID(int32 id);
+
+	rgb_color	value;
+};
+
+class AnimBool : public AnimChannel {
+	void SetValue(int32 when, bool val);
+	bool GetValue(int32 when);
+	
+	void SetValueByID(int32 id, bool val);
+	bool GetValueByID(int32 id);
+
+	bool	value;
+};
+
+class AnimString : public AnimChannel {
+	void SetValue(int32 when, const char *);
+	const char *GetValue(int32 when);
+	
+	void SetValueByID(int32 id, const char *);
+	const char *GetValueByID(int32 id);
+
+	LM_String	value;
+};
+
+class AnimVec3 : public AnimChannel {
+	void SetValue(int32 when, LM_Vector3 val);
+	LM_Vector3 GetValue(int32 when);
+	
+	void SetValueByID(int32 id, LM_Vector3 val);
+	LM_Vector3 GetValueByID(int32 id);
+
+	void SplitDimensions(bool b);
+	bool AreDimensionsSplit();
+	void SyncSplitDimensionsBack();
+	AnimVal *DimensionChannel(int32 dim); // 0:X 1:Y 2:Z
+
+	LM_Vector3	value;
+};
+
+/**********************************************************************/
+/*** Moho Layer ***/
+
+#define LT_UNKNOWN
+#define LT_VECTOR
+#define LT_IMAGE
+#define LT_GROUP
+#define LT_BONE
+#define LT_SWITCH
+#define LT_PARTICLE
+#define LT_NOTE
+#define LT_3D
+#define LT_AUDIO
+#define LT_PATCH
+#define LT_TEXT
+
+#define LDQ_WIREFRAME		// construction curves, bones, etc.
+#define LDQ_FILLS			// vector fills
+#define LDQ_OUTLINES		// vector outlines
+#define LDQ_IMAGES			// images
+#define LDQ_IMAGES_HQ		// high quality images
+#define LDQ_MASKING			// masking effects
+#define LDQ_TRANSPARENCY	// transparency
+#define LDQ_ANTIALIASING	// general antialiasing
+#define LDQ_BRUSHES			// line brushes
+#define LDQ_SHAPE_EFFECTS	// fill and line effects
+#define LDQ_LABELS			// labels (like bone names)
+#define LDQ_GRAY_UNSELECTED	// gray out non-selected layers
+#define LDQ_MASKED_LAYERS	// masked layers - turns off masking, but also the layers that would have been masked
+
+#define LM_MASKED @ MM_MASKED
+#define LM_NOTMASKED @ MM_NOTMASKED
+#define LM_ADD_MASK @ MM_ADD_MASK
+#define LM_SUB_MASK @ MM_SUB_MASK
+#define LM_ADD_MASK_INVIS @ MM_ADD_MASK_INVIS
+#define LM_SUB_MASK_INVIS @ MM_SUB_MASK_INVIS
+#define LM_CLEAR_ADD_MASK @ MM_CLEAR_ADD_MASK
+#define LM_CLEAR_ADD_MASK_INVIS @ MM_CLEAR_ADD_MASK_INVIS
+
+#define LM_BM_NORMAL @ BM_NORMAL
+#define LM_BM_MULTIPLY @ BM_MULTIPLY
+#define LM_BM_SCREEN @ BM_SCREEN
+#define LM_BM_OVERLAY @ BM_OVERLAY
+#define LM_BM_ADD @ BM_ADD
+#define LM_BM_DIFFERENCE @ BM_DIFFERENCE
+#define LM_BM_HUE @ BM_HUE
+#define LM_BM_SATURATION @ BM_SATURATION
+#define LM_BM_COLOR @ BM_COLOR
+#define LM_BM_LUMINOSITY @ BM_LUMINOSITY
+#define LM_BM_SOFT_LIGHT @ BM_SOFT_LIGHT
+#define LM_BM_COLOR_DODGE @ BM_COLOR_DODGE
+#define LM_BM_LINEAR_DODGE @ BM_LINEAR_DODGE
+#define LM_BM_COLOR_BURN @ BM_COLOR_BURN
+
+// different modes for a layer to face the camera
+#define LM_FC_NONE @ FC_NONE // don't rotate to face the camera
+#define LM_FC_CAMERA_X @ FC_CAMERA_X // rotate on the X axis to face the camera
+#define LM_FC_CAMERA_Y @ FC_CAMERA_Y // rotate on the Y axis to face the camera (this is what the original option allowed)
+#define LM_FC_CAMERA_Z @ FC_CAMERA_Z // rotate on the Z axis to face the camera
+#define LM_FC_CAMERA_FREE @ FC_CAMERA_FREE // rotate on all axes as needed to face the camera
+#define LM_FC_PLANE_X @ FC_PLANE_X // rotate on the X axis to face the camera plane
+#define LM_FC_PLANE_Y @ FC_PLANE_Y // rotate on the Y axis to face the camera plane
+#define LM_FC_PLANE_Z @ FC_PLANE_Z // rotate on the Z axis to face the camera plane
+#define LM_FC_PLANE_FREE @ FC_PLANE_FREE // rotate on all axes as needed to face the camera plane
+
+#define LM_RS_FILL_NORMAL @ RS_FILL_NORMAL
+#define LM_RS_FILL_NONE @ RS_FILL_NONE
+#define LM_RS_FILL_BACKGROUND @ RS_FILL_BACKGROUND
+#define LM_RS_FILL_BACKGROUND_SHOWTHROUGH @ RS_FILL_BACKGROUND_SHOWTHROUGH
+#define LM_RS_FILL_CRAYON @ RS_FILL_CRAYON
+#define LM_RS_FILL_HATCHED @ RS_FILL_HATCHED
+#define LM_RS_FILL_PEN @ RS_FILL_PEN
+#define LM_RS_FILL_CHALK @ RS_FILL_CHALK
+
+#define LM_RS_LINE_NORMAL @ RS_LINE_NORMAL
+#define LM_RS_LINE_NONE @ RS_LINE_NONE
+#define LM_RS_LINE_BLACK @ RS_LINE_BLACK
+#define LM_RS_LINE_SKETCHY @ RS_LINE_SKETCHY
+#define LM_RS_LINE_CRAYON @ RS_LINE_CRAYON
+#define LM_RS_LINE_PEN @ RS_LINE_PEN
+#define LM_RS_LINE_CHALK @ RS_LINE_CHALK
+
+#define LM_RS_LAYER_NORMAL @ RS_LAYER_NORMAL
+#define LM_RS_LAYER_HEAVY_OUTLINE @ RS_LAYER_HEAVY_OUTLINE
+#define LM_RS_LAYER_CUTOUT @ RS_LAYER_CUTOUT
+
+#define LM_POSEBM_STANDARD @ RS_POSEBM_STANDARD
+#define LM_POSEBM_RELATIVETODEFAULT @ RS_POSEBM_RELATIVETODEFAULT
+#define LM_POSEBM_RELATIVETOCURRENT @ RS_POSEBM_RELATIVETOCURRENT
+
+	
+class MohoRenderStyle {
+	MohoRenderStyle();
+	~MohoRenderStyle();
+
+	MohoFillRenderStyle		fFillStyle;
+	MohoLineRenderStyle		fLineStyle;
+	MohoLayerRenderStyle	fLayerStyle;
+};
+
+class MohoLayerChannel {
+	MohoLayerChannel();
+	~MohoLayerChannel();
+	static MohoLayerChannel *new_local();
+
+	int32		channelID;
+	LM_String	name;
+	int32		subChannelCount;
+	bool		selectionBased;
+	bool		separableDimensions;
+};
+
+class MohoPhysicsOptions {
+	MohoPhysicsOptions();
+	~MohoPhysicsOptions();
+
+	bool		fPhysicsEnabled;
+	bool		fStaticBody;
+	bool		fSleeping;
+	int32		fRespawnInterval;
+	LM_Vector2	fInitialVelocity;
+
+	real		fDensity;
+	real		fFriction;
+	real		fRestitution;
+
+	bool		fPivotOnOrigin;
+	bool		fEnableMotor;
+	AnimVal		fMotorSpeed;
+	real		fMotorTorque;
+	
+	bool		fForceObject;
+	AnimVec2	fForceVector;
+};
+
+class MohoLayerRef {
+	MohoLayerRef();
+	~MohoLayerRef();
+	static MohoLayerRef *new_local() { return new MohoLayerRef(); }
+
+	bool		fSameDoc;
+	LM_Path		fDocPath;
+	LM_String	fLayerUUID;
+};
+
+class MohoLayerRefSyncOptions {
+	MohoLayerRefSyncOptions();
+	~MohoLayerRefSyncOptions();
+	static MohoLayerRefSyncOptions *new_local();
+
+	bool	fAddNewLayers;
+	bool	fRemoveMissingLayers;
+	bool	fReplaceMismatchedVectors;
+	bool	fReplaceMismatchedBones;
+};
+
+class MohoLayerRenderOptions {
+public:
+	MohoLayerRenderOptions();
+	~MohoLayerRenderOptions();
+	static MohoLayerRenderOptions *new_local();
+
+	// input options (default values listed in comments)
+	int32		frame; // 0
+	int32		minDimension; // 8 - minimum size of the rendered result (pixels)
+	int32		maxDimension; // 1024 - maximum size of the rendered result (pixels)
+	int32		polyDensity; // 10 - how many pixels per polygon (approximately). A value of 10 would mean that each square covers about 10 pixels in each direction.
+	int32		polyCountX; // 20 - when building a mesh, how many polygons in the X direction (not used if polyDensity > 0)
+	int32		polyCountY; // 20 - when building a mesh, how many polygons in the Y direction (not used if polyDensity > 0)
+	bool		trimResult; // true
+	LM_String	imageExtension; // "png" - can also be "jpg" or an empty string "" to produce no image output
+	bool		embedColorProfile; // false - embed a color profile in the output image
+	bool		debugResult; // false - display the output image in the GUI (useful for debugging scripts)
+
+	// output results
+	const char	*imagePath; // the path of the rendered image
+	LM_BBox		layerBounds; // the bounds of the rendered image in document space
+	M_Mesh3D	*mesh; // pass in a mesh object if you want to have Moho generate a mesh (can be NULL)
+};
+
+class MohoLayer {
+	MohoLayer();
+	~MohoLayer();
+	static MohoLayer *new_local();
+
+	int32 LayerType();
+	bool IsGroupType();
+	bool IsBoneType();
+	bool IsAudioType();
+
+	void SetSecondarySelection(bool sel);
+	bool SecondarySelection();
+	bool IsAncestorSelected();
+
+	const char *Name();
+	void SetName(const char *name);
+	
+	const char *UUID();
+
+	void GetLayerRefInfo(MohoLayerRef &refInfo);
+	bool IsReferencedLayer();
+	bool IsReferenceExternal();
+	void BreakLayerReference();
+	void MarkReferenceOutdated();
+	bool IsReferenceOutdated();
+	bool UpdateReferencedLayer(MohoLayerRefSyncOptions *syncOptions = NULL);
+
+	int32 LabelColor();
+	void SetLabelColor(int32 colID);
+
+	uint32 QualityFlags();
+	void SetQualityFlags(uint32 flags, bool recursive = false);
+	void ShowConstructionCurves(bool b);
+	bool ConstructionCurvesOn();
+
+	int32 CurFrame();
+	void UpdateCurFrame(bool extended = false);
+	int32 DocToLayerFrame(int32 docFrame);
+
+	bool HasAnimatedLayerEffects();
+	void SetAnimatedLayerEffects(bool b);
+
+	LM_Vector2 Origin();
+	void SetOrigin(LM_Vector2 origin);
+	void SetOriginWithTransformCorrection(LM_Vector2 origin);
+
+	GroupLayer *Parent();
+	SwitchLayer *AncestorSwitchLayer();
+	MohoLayer *AncestorSwitchChild();
+
+	BoneLayer *ControllingBoneLayer();
+	M_Skeleton *ControllingSkeleton();
+	void ClearFlexiBoneSubset();
+	void AddToFlexiBoneSubset(int32 boneID);
+	void MarkFlexiBoneSubsetAsElbow(bool b);
+	void RemoveFromFlexiBoneSubset(int32 boneID);
+	bool IsIncludedInFlexiBoneSubset(int32 boneID);
+	void CopyFlexiBoneSubset(MohoLayer *fromLayer);
+	void EnableFlexiBoneSubset();
+	bool IsElbowBindInEffect();
+	void DisableFlexiBoneSubset();
+	virtual void ResetAllRigging();
+
+	int32 LayerParentBone();
+	void SetLayerParentBone(int32 id);
+	void DeleteParentBone(int32 boneID);
+
+	bool IsFullyVisible(MohoDoc *doc, bool forRendering, bool strictSwitchLayers = false, int32 atDocFrame = -1, bool ignoreSmartBones = false, bool ignoreParentLayers = false);
+
+	bool IsVisible();
+	void SetVisible(bool vis);
+
+	bool IsShownOnTimeline();
+	void SetShownOnTimeline(bool b);
+
+	bool AreChannelsConsolidated();
+	void SetConsolidatedChannels(bool b);
+
+	bool IsRenderOnly();
+	void SetRenderOnly(bool b);
+
+	bool IsEditOnly();
+	void SetEditOnly(bool b);
+
+	bool IsIgnoredByLayerPicker();
+	void SetIgnoredByLayerPicker(bool b);
+
+	bool HasScaleCompensation();
+	void SetScaleCompensation(bool b);
+
+	real ScaleNormalization();
+	void SetScaleNormalization(real f);
+
+	bool DoesRotateToFollow();
+	void SetRotateToFollow(bool b);
+
+	bool DoesFaceCamera();
+	int32 FaceCameraMode();
+	void SetFaceCamera(bool b, int32 mode = 2);
+
+	int32 MaskingMode();
+	void SetMaskingMode(int32 mode);
+	bool MaskExpansion();
+	void SetMaskExpansion(bool b);
+
+	int32 BlendingMode();
+	void SetBlendingMode(int32 mode);
+
+	bool IsImmuneToCamera();
+	void SetImmuneToCamera(bool b);
+
+	bool IsImmuneToDof();
+	void SetImmuneToDof(bool b);
+
+	const char *HsvImage(LM_SecureAccess **outAccess = NULL);
+	void SetHsvImage(const char *path);
+
+	int32 TimingOffset();
+	void SetTimingOffset(int32 timingOffset);
+	int32 TotalTimingOffset();
+
+	const char *LayerScript(LM_SecureAccess **outAccess = NULL);
+	void SetLayerScript(const char *path);
+	void RunLayerScript();
+
+	void GetLayerTransform(int frame, LM_Matrix *matrix, MohoDoc *doc);
+	void GetFullTransform(int frame, LM_Matrix *matrix, MohoDoc *doc);
+	void GetParentTransform(int frame, LM_Matrix *matrix, MohoDoc *doc);
+	void GetParentBoneTransform(int32 frame, LM_Matrix *matrix, MohoDoc *doc);
+
+	void AlignWithCamera(int32 frame, MohoDoc *doc, bool useLayerBounds = false);
+	void CopyTransform(MohoLayer* fromLayer);
+	
+	LM_BBox Bounds(int32 frame);
+
+	// This function is only a first guess when caching an image for a layer. The actual bounds will be different after trimming away transparent
+	LM_BBox BoundsForCaching(int32 frame);
+
+	void FreeCachedImage();
+	bool RenderLayerImage(MohoLayerRenderOptions *options);
+
+	int32 AnimDuration();
+	int32 LayerDuration();
+	void ClearAnimation(bool recursive, int32 fromFrame, bool before);
+	void DeleteKeysAtFrame(bool recursive, int32 frame);
+	void ResetAnimation(bool recursive, bool animatedChannelsOnly = false);
+	void AddKey(int32 frame, bool recursive, bool animatedChannelsOnly);
+	void ClearLayerKeyCount();
+	int32 CountLayerKeys();
+	int32 GetLayerKeyWhen(int32 keyID);
+
+	int32 NumChannels @ CountChannels();
+	void GetChannelInfo(int32 id, MohoLayerChannel *channelInfo);
+	AnimChannel *Channel(int32 id, int32 subID, MohoDoc *doc);
+
+	void CopyFrame(int32 fromFrame, int32 toFrame, bool recursive);
+	void DeleteFrame(int32 frame, bool recursive);
+
+	int32 CountPoses @ CountActions();
+	const char *PoseName @ ActionName(int32 id);
+	const char *CurrentPose @ CurrentAction();
+	bool HasPose @ HasAction(const char *name);
+	int32 GetPoseID @ ActionID(const char *name);
+	bool IsSmartBonePose @ IsSmartBoneAction(const char *name);
+	void ActivatePose @ ActivateAction(const char *name);
+	void InsertPose @ InsertAction(const char *name, int32 frame, bool byReference);
+	void RenamePose @ RenameAction(const char *oldName, const char *newName);
+	void DeletePose @ DeleteAction(const char *name);
+	void ReorderPose @ ReorderAction(const char *moveName, const char *placeAfterName);
+	int32 PoseDuration @ ActionDuration(const char *name);
+	void BlendPoses @ BlendActions(int32 frame, bool relativeToDefault, int32 numToBlend, LM_String names[numToBlend], real percentages[numToBlend]);
+	void BlendPosesWithMode @ BlendActions(int32 frame, int32 blendMode, int32 numToBlend, LM_String names[numToBlend], real percentages[numToBlend], int32 frames[numToBlend]);
+
+	void SetFollowingCurve(MohoLayer *layer, M_Curve *curve, real startingCurvePercentage, bool bendWithCurve);
+	MohoLayer *GetFollowingLayer();
+	M_Curve *GetFollowingCurve();
+
+	void SetWarpLayer(MohoLayer *layer);
+	MohoLayer *GetWarpLayer();
+
+	bool IsPhysicsInEffect(int32 frame);
+	GroupLayer *PhysicsParent(int32 frame);
+	MohoPhysicsOptions *PhysicsOptions();
+
+	void SetLocked(bool b);
+	bool IsLocked();
+	LM_Message *Metadata();
+	LM_Message *ScriptData();
+
+	const char* UserComments();
+	void SetUserComments(const char* comments);
+
+	const char* UserTags();
+	void SetUserTags(const char* tags);
+
+	// transforms
+	AnimVec3	fTranslation;
+	AnimVec3	fScale;
+	AnimVal		fRotationX;
+	AnimVal		fRotationY;
+	AnimVal		fRotationZ;
+	AnimBool	fFlipH;
+	AnimBool	fFlipV;
+	AnimVec3	fShear;
+	AnimVal		fFollowing;
+	AnimVec2	fPhysicsNudge;
+
+	// layer effects
+	AnimBool	fVisibility;
+	AnimVal		fBlur;
+	AnimVal		fAlpha;
+	AnimVal		fAmbientOcclusionRadius;
+	AnimVal		fThreshold;
+	AnimVal		fNoise;
+	AnimVal		fPixelation;
+
+	// layer shadow
+	AnimBool	fLayerShadow;
+	AnimVal		fShadowAngle;
+	AnimVal		fShadowOffset;
+	AnimVal		fShadowBlur;
+	AnimVal		fShadowExpansion;
+	AnimColor	fShadowColor;
+	AnimVal		fShadowNoiseAmp;
+	AnimVal		fShadowNoiseScale;
+
+	// layer shading
+	AnimBool	fLayerShading;
+	AnimVal		fShadingAngle;
+	AnimVal		fShadingOffset;
+	AnimVal		fShadingBlur;
+	AnimVal		fShadingContraction;
+	AnimColor	fShadingColor;
+	AnimVal		fShadingNoiseAmp;
+	AnimVal		fShadingNoiseScale;
+
+	// perspective shadow
+	AnimBool	fPerspectiveShadow;
+	AnimVal		fPerspectiveBlur;
+	AnimVal		fPerspectiveScale;
+	AnimVal		fPerspectiveShear;
+	AnimColor	fPerspectiveColor;
+	
+	// motion blur
+	AnimBool	fMotionBlur;
+	AnimBool	fMotionBlurSubframes;
+	AnimVal		fMotionBlurFrames;
+	AnimVal		fMotionBlurSkip;
+	AnimVal		fMotionBlurAlphaStart;
+	AnimVal		fMotionBlurAlphaEnd;
+	AnimVal		fMotionBlurRadius;
+	AnimVal		fMotionBlurFramePercentage;
+	AnimVal		fMotionBlurExtendedFrames;
+
+	// layer outline
+	AnimBool	fLayerOutline;
+	AnimVal		fOutlineWidth;
+	AnimColor	fOutlineColor;
+
+	// layer coloring
+	AnimBool	fLayerColorOn;
+	AnimColor	fLayerColor;
+
+	// timeline markers
+	AnimString	fTimelineMarkers;
+};
+
+/**********************************************************************/
+/*** Mesh Layer ***/
+
+#define Mc_VECTOR3D_NONE @ VECTOR3D_NONE
+#define Mc_VECTOR3D_EXTRUDE @ VECTOR3D_EXTRUDE
+#define Mc_VECTOR3D_LATHE @ VECTOR3D_LATHE
+#define Mc_VECTOR3D_INFLATE @ VECTOR3D_INFLATE
+
+class MeshLayer : public MohoLayer {
+	M_Mesh *Mesh();
+
+	void SetContinuousTriangulation(bool b);
+	bool ContinuousTriangulation();
+	void PauseContinuousTriangulation(bool b);
+
+	bool IsWarpLayerCandidate(bool curverOnly = false);
+	void MarkAsWarpLayer(bool b, MohoLayer *target);
+	bool IsWarpLayer();
+	void MarkAsCurver(bool b);
+	bool IsCurver();
+	void SetNeedsWarpLayerUpdate();
+	void UpdateWarpLayer();
+
+	const char *FillTexture(LM_SecureAccess **outAccess = NULL);
+	void SetFillTexture(const char *path);
+	const char *LineTexture(LM_SecureAccess **outAccess = NULL);
+	void SetLineTexture(const char *path);
+	void Purge3DLayer();
+
+	bool IsShapeClosed(M_Shape *shape);
+
+	void DrawHandles(MohoDoc *doc, XGraphics *db, bool selectedOnly);
+
+	bool			fNoisyShapes;
+	bool			fNoisyLines;
+	bool			fAnimatedNoise;
+	bool			fExtraSketchy;
+	real			fNoiseAmp;
+	real			fNoiseScale;
+	int32			fExtraLines;
+	bool			fSquashableCurveDeformer;
+	bool			fGapFilling;
+	bool			fExcludeLinesFromMask;
+	int32			f3DMode;
+	Mesh3DOptions	f3DOptions;
+};
+
+/**********************************************************************/
+/*** Audio Layer ***/
+
+class AudioLayer : public MohoLayer {
+	void SetAudioFile(const char *path);
+	const char *AudioFile(LM_SecureAccess **outAccess = NULL);
+	real MaxAmplitude();
+	real GetAmplitude(real startTime, real duration);
+	real GetRMSAmplitude(real startTime, real duration);
+	real GetMaxAmplitude(real startTime, real duration);
+	void SetAudioText(const char *text);
+	const char *AudioText();
+	real MaxAmplitude();
+	bool IsSilent();
+	real GetAudioLevel(int32 frame, bool forRendering = false);
+	real GetStereoPosition(int32 frame);
+	void SetSpatialPositioning(bool b);
+	bool SpatialPositioning();
+	real FrameToAudioTime(int32 frame, real frameDuration);
+
+	AnimVal				fAudioLevel;
+	AnimVal				fJumpToFrame;
+};
+
+/**********************************************************************/
+/*** Note Layer ***/
+
+class NoteLayer : public MohoLayer {
+	const char *NoteText();
+	void SetNoteText(const char *text);
+};
+
+/**********************************************************************/
+/*** Image Layer ***/
+
+class TrackingPoint {
+public:
+	const char *Name();
+	void SetName(const char *str);
+	int32 StartFrame();
+
+	AnimVec2	fAnimPos;
+	int32		fCompareRadius;
+	int32		fSearchRadius;
+	int32		fLastFrame;
+	bool		fSelected;
+};
+
+#define LM_NEAREST_SAMP @ SM_NEAREST
+#define LM_BILINEAR_SAMP @ SM_BILINEAR
+
+class ImageLayer : public AudioLayer {
+	void SetSourceImage(const char *path);
+	const char *SourceImage(LM_SecureAccess **outAccess = NULL);
+	bool IsPSDImage();
+	void ResetPSDBounds();
+	void UnloadImage();
+
+	void SetUnwrap(bool b);
+	bool IsUnwrapped();
+	void SetQualityLevel(int32 q); // currently this should be 1 or 2 (low or high)
+	int32 QualityLevel();
+
+	void SetAviAlpha(bool b);
+	bool AviHasAlpha();
+	void SetMovieLooping(bool b);
+	bool MovieLooping();
+	void SetReverseMovie(bool b);
+	bool MovieReversed();
+	bool IsMovieLayer();
+	bool IsImageSequenceLayer();
+	int32 MovieDuration();
+	real MovieFps();
+	void SetMovieFps(real fps);
+
+	real Width();
+	real Height();
+	int32 PixelWidth();
+	int32 PixelHeight();
+
+	void ImageToLayer(LM_Vector2 pixel, LM_Vector2 &layer);
+	void LayerToImage(LM_Vector2 layer, LM_Vector2 &pixel);
+
+	void ClearMaskingPoints();
+	void AddMaskingPoint(LM_Vector2 seedPt, int32 tolerance, bool reverseMask);
+	void AdjustMaskingPointTolerance(int32 tolerance);
+	void FinalizeMaskingPoint();
+
+	int32 CountTrackingPoints();
+	TrackingPoint *GetTrackingPoint(int32 id);
+	TrackingPoint *AddTrackingPoint(LM_Vector2 pos, int32 frame);
+	void DeleteSelectedTrackingPoints();
+	void StartTracking(TrackingPoint *point);
+	
+	void SetToonEffect(bool b, int32 minEdgeThreshold, int32 maxEdgeThreshold, int32 grayThreshold, int32 blackThreshold, int32 saturation, int32 lightness, int32 quantizeLevels);
+	bool HasToonEffect(int32 *minEdgeThreshold, int32 *maxEdgeThreshold, int32 *grayThreshold, int32 *blackThreshold, int32 *saturation, int32 *lightness, int32 *quantizeLevels);
+
+	int32 SamplingMode();
+	void SetSamplingMode(int32 mode);
+	
+	bool PremultipliedMovie();
+	void SetPremultipliedMovie(bool b);
+
+	void SetCroppingBounds(LM_BBox *bounds);
+	void ClearCroppingBounds();
+	LM_BBox CroppingBounds();
+};
+
+/**********************************************************************/
+/*** Group Layer ***/
+
+#define GROUP_MASK_NONE
+#define GROUP_MASK_SHOW_ALL
+#define GROUP_MASK_HIDE_ALL
+
+class GroupLayer : public MohoLayer {
+	int32 CountLayers();
+	MohoLayer *Layer(int32 id);
+	MohoLayer *LayerByDepth(int32 id);
+	MohoLayer *LayerByName(const char *name);
+	bool IsLayerValid(MohoLayer *layer);
+	bool IsLayerValid(const char *uuid);
+	bool IsMyChild(MohoLayer *childLayer);
+
+	bool IsExpanded();
+	void Expand(bool b);
+
+	int32 GetGroupMask();
+	void SetGroupMask(int32 mask); // 0=none, 1=all visible, 2=all invisible
+
+	bool IsDepthSorted();
+	void SetDepthSorted(bool b);
+	bool IsDistanceSorted();
+	void SetDistanceSorted(bool b);
+	bool IsLayerOrderingEnabled();
+	void EnableLayerOrdering(bool b);
+	bool IsLayerOrdered();
+	AnimString *GetLayerOrdering();
+
+	void EnablePhysics(int32 frame, bool b);
+	bool IsPhysicsEnabled(int32 frame); // if frame is < 0, the return value is true if physics is *ever* enabled during the course of the animation
+	int32 MostRecentPhysicsKeyframe(int32 frame); // returns the most recent keyframe (before or at the given frame) for physics enablement
+	void SetPhysicsGravity(LM_Vector2 gravity);
+	LM_Vector2 PhysicsGravity();
+	bool MultiplePhysicsKeys();
+	void UseBakedPhysics(bool b);
+	bool UsingBakedPhysics();
+	
+	void FullDepthSort(MohoDoc *doc = NULL);
+	void DepthSort(MohoDoc *doc = NULL);
+
+	void StripUserTags();
+	void StripUserComments();
+};
+
+/**********************************************************************/
+/*** Bone Layer ***/
+
+class BoneLayer : public GroupLayer {
+	M_Skeleton *Skeleton();
+	bool IsGrandpaBone();
+	void SetGrandpaBone(bool value);
+	float EvaluateWindTurbulentAngle(LM_Vector2 location);
+	float EvaluateWindTurbulentStrength(LM_Vector2 location);
+	void DrawHighlightedBone(MohoDoc *doc, XGraphics *db, int32 boneID);
+
+	AnimVal			fWindDirection;
+	AnimVal			fWindStrength;
+	AnimVal			fWindTurbulentAmplitude;
+	AnimVal			fWindTurbulentFrequency;
+
+	AnimVal			fGravityDirection;
+	AnimVal			fGravityStrength;
+};
+
+/**********************************************************************/
+/*** Switch Layer ***/
+
+class SwitchLayer : public GroupLayer {
+	const char *GetValue(int32 frame);
+	void SetValue(int32 frame, const char *value);
+	AnimString *SwitchValues();
+	bool ContainsVisemes();
+	const char *PhonemeToViseme(char phoneme);
+	int32 RankViseme(const char *viseme);
+	bool InterpMode();
+	void SetInterpMode(bool b);
+	bool IsFBFLayer();
+	void SetFBFLayer(bool b);
+	void SetSourceFile(const char *path);
+};
+
+/**********************************************************************/
+/*** Particle Layer ***/
+
+class ParticleLayer : public GroupLayer {
+	void FinalizeSettings();
+	void SetRandomSeed(int32 seed);
+
+	void SetNumParticles(int32 num, int32 displayNum);
+	void GetNumParticles(int32 *num, int32 *displayNum);
+	void SetPreviewPercentage(real percent);
+	real PreviewPercentage();
+	void SetUseBaseLayerAsSource(bool baseAsSource);
+	bool UseBaseLayerAsSource();
+	void SetLifetime(int32 lifetime);
+	int32 Lifetime();
+	void SetOrientation(bool orient);
+	bool Orientation();
+	void SetFreeFloating(bool freeFloating);
+	bool FreeFloating();
+	void SetEvenlySpaced(bool evenlySpaced);
+	bool EvenlySpaced();
+	void SetRandomStartTime(bool randomStartTime);
+	bool RandomStartTime();
+	void SetEmitInOrder(bool emitInOrder);
+	bool EmitInOrder();
+	void SetPlaybackTimeShift(int32 frames);
+	int32 PlaybackTimeShift();
+	void SetSourceDimensions(const LM_Vector3 &v);
+	LM_Vector3 SourceDimensions();
+	void SetDirection(real angle, real spread);
+	void GetDirection(real *angle, real *spread);
+	void SetVelocity(real v, real spread);
+	void GetVelocity(real *v, real *spread);
+	void SetDamping(real d);
+	real Damping();
+	void SetAcceleration(real angle, real rate);
+	void GetAcceleration(real *angle, real *rate);
+	void SetFullSpeedStart(bool b);
+	bool FullSpeedStart();
+
+	AnimBool *RunningTrack();
+};
+
+/**********************************************************************/
+/*** Mesh3D Layer ***/
+
+#define Mc_SHADING_NONE @ SHADING_NONE
+#define Mc_SHADING_TOON @ SHADING_TOON
+#define Mc_SHADING_HATCHED @ SHADING_HATCHED
+#define Mc_SHADING_EXTRUDED_EDGE @ SHADING_EXTRUDED_EDGE
+
+class Mesh3DOptions {
+public:
+	// shading effects
+	int32			fShadingMode;
+	int32			fShadingDensity; // from 0 to 100
+	rgb_color		fShadingColor;
+	
+	// edge rendering
+	bool			fSilhouetteEdges;
+	bool			fMaterialEdges;
+	bool			fCreaseEdges;
+	real			fCreaseAngle;
+	real			fEdgeExtension;
+	
+	// other options
+	bool			fBackfaceRemoval;
+	bool			fResetZ;
+};
+
+/*class PoserActorGroup {
+	int32 CountParameters();
+	const char *ParameterName(int32 id);
+	real ParameterMinVal(int32 id);
+	real ParameterMaxVal(int32 id);
+	AnimVal *Parameter(int32 id, bool createIfMissing);
+	int32 PrimaryParameterID();
+
+	LM_String	fFigureName;
+	LM_String	fInternalName;
+	LM_String	fExternalName;
+	
+	int32		fSelectedParameter;
+};*/
+
+class Mesh3DLayer : public MohoLayer {
+	//bool IsPoserLayer();
+	void SetSourceMesh(const char *path);
+	const char *SourceMesh(LM_SecureAccess **outAccess = NULL);
+	void SetEdgeOffset(real offset);
+	real EdgeOffset();
+	//PoserActorGroup *GetPoserActorGroup(int32 id);
+	//void UpdatePoserParameters();
+	//void SetSelectedPoserActorGroup(int32 id);
+	//void SelectPoserBody(const char *figureName);
+	//int32 SelectedPoserActorGroup();
+	M_Face3D *PickedFaceByID(int32 id);
+
+	Mesh3DOptions	f3DOptions;
+};
+
+/**********************************************************************/
+/*** Layer Comp ***/
+
+class LayerComp {
+	const char *Name();
+	void SetName(const LM_String& inName);
+
+	void AddLayer(MohoLayer& layer);
+	void RemoveLayer(MohoLayer& layer);
+	void RemoveAllLayers();
+	
+	bool ContainsLayer(MohoLayer& layer);
+
+	int32 CountLayers();
+
+	bool AutoAddsSwitchLayerChildren();
+	void SetAutoAddsSwitchLayerChildren(bool autoAdd);
+
+	bool AutoAddsGroupLayerChildren();
+	void SetAutoAddsGroupLayerChildren(bool autoAdd);
+
+	// AutoAddChildLayers adds child layers to the comp as needed according to AutoAdds...LayerChildren() settings for the comp
+	// returns true if the comp was modified
+	// To scan all layers in the doc, pass NULL for parent
+	bool AutoAddChildLayers(MohoDoc *doc, GroupLayer *parent=NULL);
+};
+
+/**********************************************************************/
+/*** Moho Document ***/
+
+class MohoDoc {
+	void Refresh();
+
+	int32 CountLayers();
+	MohoLayer *Layer(int id);
+	MohoLayer *LayerByName(const char *name);
+	bool IsLayerValid(MohoLayer *layer);
+	bool IsLayerValid(const char *uuid);
+	void ClearSecondarySelection(GroupLayer *group = NULL);
+	int32 CountSelectedLayers(GroupLayer *group = NULL);
+	MohoLayer *GetSelectedLayer(int32 id);
+	int32 LayerID(MohoLayer *layer);
+	int32 LayerAbsoluteID(MohoLayer *layer);
+	MohoLayer *LayerByAbsoluteID(int32 id);
+	MohoLayer *DuplicateLayer(MohoLayer *origLayer);
+
+	char *Path(LM_SecureAccess **outAccess = NULL);
+	char *Name();
+
+	void SetCurrentDocPose @ SetCurrentDocAction(const char *poseName);
+	const char *CurrentDocPose @ CurrentDocAction();
+
+	void PrepUndo(const char * undoAction, MohoLayer *layer, bool shallow = false, bool willOnlyAddPoints = false);
+	void PrepUndo(MohoLayer *layer, bool shallow = false, bool willOnlyAddPoints = false);
+	void PrepMultiUndo(bool shallow = false);
+	void Undo();
+	void Redo();
+	bool IsUndoable();
+	bool IsRedoable();
+	void SetDirty();
+
+	int32 AnimDuration();
+	void ClearAnimation(int32 fromFrame, bool before);
+	void DeleteKeysAtFrame(int32 frame);
+
+	int32 Width();
+	int32 Height();
+	void SetShape(int32 w, int32 h);
+	real AspectRatio();
+
+	int32 StartFrame();
+	void SetStartFrame(int32 frame);
+	int32 EndFrame();
+	void SetEndFrame(int32 frame);
+
+	real Fps();
+	void SetFps(real fps);
+
+	LM_Message *Metadata();
+
+	rgb_color BackCol();
+	void SetBackCol(rgb_color col);
+
+	int32 NoiseGrain();
+	void SetNoiseGrain(int32 ng);
+
+	bool Allow3D();
+	void SetAllow3D(bool b);
+
+	real StereoSeparation();
+	void SetStereoSeparation(real ss);
+
+	MohoRenderStyle *GlobalRenderStyle();
+
+	bool IsOutsideViewEnabled();
+	void GetOutsideViewMatrix(LM_Matrix *m);
+	void GetCameraMatrix(int32 frame, LM_Matrix *m);
+	LM_Vector3 GetCameraDirection();
+
+	// styles
+	int32 CountStyles();
+	M_Style *StyleByID(int32 id);
+	M_Style *Style(const char *styleName);
+	M_Style *AddStyle(const char *styleName);
+	void AddStyle(M_Style *style);
+	void RemoveStyle(M_Style *style, MohoLayer *layer = NULL);
+	void RelinkStyles(MohoLayer *layer = NULL);
+	void RenameStyle(const char *oldName, const char *newName, MohoLayer *layer = NULL);
+	bool IsStyleUsed(M_Style *style, MohoLayer *layer = NULL);
+
+	void DepthSort();
+
+	// layer comps
+	int32 CountLayerComps();
+	LayerComp *GetLayerComp(int32 id);
+	LayerComp* AddLayerCompWithName(const char *name);
+	void DeleteLayerComp(int32 inID);
+	void SortLayerComps();
+	void CleanLayerComps();
+	void ApplyLayerComp(LayerComp *comp, LayerCompState state);
+	void ApplyLayerComp(LayerComp *comp, LayerCompState state, MohoLayer *layer);
+
+	const char* UserComments();
+	void SetUserComments(const char* comments);
+
+	const char* UserTags();
+	void SetUserTags(const char* tags);
+
+	void StripUserTags();		// from document and all layers
+	void StripUserComments();	// from document and all layers
+
+// camera
+	AnimVec3		fCameraTrack;
+	AnimVal			fCameraZoom;
+	AnimVal			fCameraRoll;
+	AnimVec2		fCameraPanTilt;
+
+	// timeline markers
+	AnimString		fTimelineMarkers;
+};
+
+/**********************************************************************/
+/*** Vector Mesh ***/
+
+#define Mc_DEFAULT_CURVATURE @ SMOOTH
+#define Mc_PEAK_CURVATURE @ PEAKED
+#define Mc_PEAK_WEIGHT @ PEAK_WEIGHT
+#define Mc_CURVE_INTERP_LEGACY @ CURVE_INTERP_LEGACY
+#define Mc_CURVE_INTERP_V7 @ CURVE_INTERP_V7
+
+class M_Point {
+	int32 GetNumCurves @ CountCurves();
+	M_Curve *GetCurve @ Curve(int32 id, int32 *where);
+	bool IsPointOnCurve(int32 curveID, int32 where = -1);
+
+	void SetPos(LM_Vector2 pos, int32 frame);
+	void SetCurvature(real curvature, int32 frame);
+	void ResetControlHandles(int32 frame);
+	void FlipControlHandles(int32 frame);
+	bool IsEndpoint();
+	void GetEndpointEdge(int32 *curveID, int32 *segID);
+
+	bool		fSelected;
+	bool		fPrevSelected;
+	bool		fHidden;
+	LM_Vector2	fPos;
+	LM_Vector2	fTempPos;
+	AnimVec2	fAnimPos;
+	AnimVal		fWidth;
+	real		fTempWidth;
+	AnimVal		fOpacity;
+	real		fTempOpacity;
+	AnimVal		fColorDrift;
+	real		fTempColorDrift;
+	int32		fParent;
+	bool		fColored;
+	AnimColor	fColor;
+	AnimVal		fColorStrength;
+};
+
+class M_Curve {
+	int32 GetNumPoints @ CountPoints();
+	M_Point *GetPoint @ Point(int32 id);
+	int32 GetPointID @ PointID(M_Point *point);
+	AnimVal *GetCurvature @ Curvature(int32 id);
+	void DeleteCurvatureKey(int32 id, int32 when);
+
+	int32 GetNumSegments @ CountSegments();
+	bool IsSegmentSelected(int32 segID);
+	bool IsPointOnSegment(int32 ptID, int32 segID);
+	
+	void GetControlPoints(int32 segID, LM_Vector2 *p1, LM_Vector2 *p2, LM_Vector2 *p3, LM_Vector2 *p4, bool forDrawing = false);
+
+	bool IsSegmentOn(int32 segID);
+	void SetSegmentOn(int32 segID, bool b);
+
+	real GetCurvature(int32 ptID, int32 frame);
+	void SetCurvature(int32 ptID, real curvature, int32 frame);
+
+	real GetWeight(int32 ptID, int32 frame, bool prePoint);
+	void SetWeight(int32 ptID, real weight, int32 frame, bool prePoint);
+
+	real GetOffset(int32 ptID, int32 frame, bool prePoint);
+	void SetOffset(int32 ptID, real offset, int32 frame, bool prePoint);
+
+	LM_Vector2 GetControlHandle(int32 ptID, int32 frame, bool prePoint);
+	void SetControlHandle(int32 ptID, LM_Vector2 handle, int32 frame, bool prePoint, bool syncAngles);
+	void ResetControlHandles(int32 ptID, int32 frame);
+	void CorrectControlHandleAngles(int32 ptID, int32 frame, bool allFrames = false);
+	void AimControlHandleAtNeighbor(int32 ptID, int32 frame, bool prePoint);
+
+	LM_Vector2 PointOnSegment(int32 segID, real percent, bool forDrawing = false);
+	LM_Vector2 ClosestPointOnSegment(int32 segID, LM_Vector2 vec, bool forDrawing = false, bool extraPrecision = false);
+
+	bool IsSelected();
+	bool IsPartiallySelected();
+	void SelectCurvePoints();
+	void DeselectCurvePoints();
+	real CurveLength();
+	real SegmentLength(int32 segID);
+	LM_Vector2 GetPercentLocation(real percent);
+	LM_Vector2 GetPercentTangent(real percent);
+	void GetSegmentRange(int32 segID, real *startPercent, real *endPercent);
+
+	void SetProfileCurve(MohoLayer *layer, M_Curve *curve);
+
+	bool		fClosed;
+	AnimVal		fStartPercent;
+	AnimVal		fEndPercent;
+	int32		fProfileRepeat;
+	AnimVal		fProfileOffset;
+};
+
+#define GRADIENT_LINEAR
+#define GRADIENT_RADIAL
+#define GRADIENT_REFLECTED
+#define GRADIENT_ANGLE
+
+class M_Style {
+	const char *Name();
+	void SetName(const char *name);
+
+	bool ArePropertiesEqual(M_Style *style);
+
+	void SetSoftEdge(real radius);
+	void SetShading(real angle, real offset, real blur, rgb_color color);
+	void SetShadow(real angle, real offset, real blur, rgb_color color);
+	void SetHalo(real haloRadius, real blurRadius, rgb_color haloColor, bool haloOnly);
+	void SetGradient(int32 gradientType, bool allowTransparency = false);
+	void SetGradientColor(real position, rgb_color color);
+
+	void SetStrokeSoftEdge(real radius);
+	void SetStrokeHalo(real haloRadius, real blurRadius, rgb_color haloColor, bool haloOnly);
+
+	LM_String		fName;
+	LM_String		fUUID;
+
+	bool			fDefineFillCol;
+	AnimColor		fFillCol;
+
+	bool			fDefineLineWidth;
+	real			fLineWidth;
+
+	bool			fDefineLineCol;
+	AnimColor		fLineCol;
+
+	int32			fLineCaps; // 0 - none, 1 - round
+
+	LM_String		fBrushName;
+	bool			fBrushIsColor;
+	bool			fBrushAlign;
+	real			fBrushJitter;
+	real			fBrushSpacing;
+	real			fBrushAngleDrift;
+	bool			fBrushRandomize;
+	bool			fBrushTint;
+	bool			fBrushRandomOrder;
+	bool			fBrushMergedAlpha;
+	real			fBrushSizeVariationAmp;
+	real			fBrushSizeVariationScale;
+	int32			fBrushRandomInterval;
+	real			fBrushHueDrift;
+	real			fBrushSatDrift;
+	real			fBrushValDrift;
+};
+
+#define COMBO_NORMAL
+#define COMBO_ADD
+#define COMBO_SUBTRACT
+#define COMBO_INTERSECT
+
+class M_Shape {
+	const char *Name();
+	void SetName(const char *name);
+	int32 ShapeID();
+	int32 GetNumEdges @ CountEdges();
+	void GetEdge(int32 edgeID, int32 *curveID, int32 *segID);
+	void AddEdge(int32 curveID, int32 segID);
+	bool ContainsCurve(int32 curveID);
+	bool ContainsEdge(int32 curveID, int32 segID);
+	bool ContainsPoint(int32 pointID);
+	int32 GetNumPoints @ CountPoints();
+	int32 GetPoint(int32 pointID);
+
+	void SelectAllPoints();
+	bool AllPointsSelected();
+
+	bool HasPointColors();
+	rgb_color ColorAtPoint(LM_Vector2 pos);
+
+	bool AllPointsSelected();
+	void ShapeBounds(LM_Vector2 *min, LM_Vector2 *max);
+	void ShapeBounds(LM_Vector2 *min, LM_Vector2 *max, int32 frame);
+	LM_BBox	ShapeBounds();
+	LM_BBox	EdgeBounds(int32 edgeID);
+	LM_Vector2 ShapeCenter();
+	LM_Vector2 EffectHandle1();
+	LM_Vector2 EffectHandle2();
+
+	void CopyStyleProperties(M_Shape *fromShape, bool skipFill = false, bool skipLine = false);
+	bool ArePropertiesEqual(M_Shape *shape);
+	void RemoveStyles();
+	void MakePlain();
+	bool HasPositionDependentStyles(int32 fillOrStroke = 2); // 0:fill 1:stroke 2:both
+
+	bool	IsInCluster();
+	M_Shape	*BottomOfCluster();
+	M_Shape	*NextInCluster();
+	M_Shape	*PreviousInCluster();
+	M_Shape	*TopOfCluster();
+
+	bool		fSelected;
+	bool		fHidden;
+
+	LM_String	fName;
+
+	bool		fHasFill;
+	bool		fHasOutline;
+	bool		fFillAllowed;
+
+	int32		fComboMode;
+	AnimVal		fComboBlend;
+
+	AnimVal		fEffectScale;
+	AnimVal		fEffectRotation;
+	AnimVec2	fEffectOffset;
+	AnimVal		f3DThickness;
+
+	M_Style		fMyStyle;
+	LM_String	fInheritedStyleName; // Starting in AS11, these actually refer to style UUIDs, not names. The variable name here hasn't changed in order to not break the scripting interface.
+	M_Style		*fInheritedStyle;
+	LM_String	fInheritedStyleName2; // Starting in AS11, these actually refer to style UUIDs, not names. The variable name here hasn't changed in order to not break the scripting interface.
+	M_Style		*fInheritedStyle2;
+};
+
+class M_PointGroup {
+	const char *GroupName @ Name();
+	int32 GetNumPoints @ CountPoints();
+	M_Point *GetPoint @ Point(int32 id);
+	bool ContainsPointID(int32 id);
+	void AddPointID(int32 id);
+
+	LM_String	fName;
+};
+
+class M_Mesh {
+	bool ContinuousTriangulation();
+
+	void Empty @ Clear();
+
+	int32 CurveInterpretation();
+	void SetCurveInterpretation(int32 interp);
+
+	bool AnimatedShapeOrder();
+	void SetAnimatedShapeOrder(bool b);
+	
+	bool IsSkiaScaleFactorSet();
+	real SkiaScaleFactor();
+	void SetSkiaScaleFactor(real scaleFactor); // Set to 0 or less to revert to built-in default
+	real InverseSkiaScaleFactor();
+
+	int32 GetNumPoints @ CountPoints();
+	int32 GetNumVisiblePoints @ CountVisiblePoints();
+	int32 GetNumCurves @ CountCurves();
+	int32 GetNumShapes @ CountShapes();
+	int32 GetNumGroups @ CountGroups();
+	M_Point *GetPoint @ Point(int32 id);
+	M_Point	*GetVisiblePoint @ VisiblePoint(int32 id);
+	M_Curve *GetCurve @ Curve(int32 id);
+	M_Shape *GetShape @ Shape(int32 id);
+	M_Shape *GetShape @ ShapeByName(const char *name);
+	M_Shape *GetShapeByID @ ShapeByID(int32 id);
+	M_PointGroup *GetGroup @ Group(int32 id);
+
+	M_Shape *GetUserEdgeShape @ UserEdgeShape();
+
+	void AddPoint(LM_Vector2 &pos, int32 attachID, int32 frame);
+	void AddPoint(LM_Vector2 &pos, int32 attachCurve, int32 attachSeg, int32 frame, bool correctBezierHandles = true, bool preserveCorners = false);
+	void AddLonePoint(LM_Vector2 pos, int32 frame);
+	void AppendPoint(LM_Vector2 pos, int32 frame);
+	void DeletePoint(int32 id, bool preserveHandles = true);
+	void DeleteSelectedPoints();
+	bool WeldPoints(int32 movingID, int32 solidID, int32 frame);
+	bool ArePointsAdjacent(int32 p1, int32 p2);
+	void MakePointConsistentWithNeighbors(int32 id, int32 frame);
+	void SimplifyCurve(int32 curveID, real angleTolerance);
+	void AdvancedCurveSimplification(int32 curveID, int32 frame, real reductionEpsilon = 0.01f, real curveEpsilon = 0.01f, real splitThreshold = 0.1f);
+	int32 IsCurveValid(M_Curve *curve);
+
+	int32 ClosestPoint(LM_Vector2 &pos, int32 ignoreID = -1, int32 maxPointID = -1, bool endpointsOnly = false);
+	LM_Vector2 SelectedCenter();
+	void SelectedBounds(LM_Vector2 *min, LM_Vector2 *max);
+	void PrepMovePoints();
+	void PrepFixedHandles(int32 frame);
+	void PreserveHandlePositions(int32 frame);
+	void TranslatePoints(LM_Vector2 &offset);
+	void ScalePoints(real sx, real sy, LM_Vector2 &centerVec, bool flipHandles = false);
+	void RotatePoints(real angle, LM_Vector2 &centerVec);
+	void TransformPoints(LM_Vector2 &offset, real sx, real sy, real angle, LM_Vector2 &centerVec);
+	bool AllPointsUnbound();
+
+	void SelectNone(); // deselects points and shapes
+	void DeselectPoints(); // deselects just points
+	void SelectAll();
+	void SelectInverse();
+	void SelectConnected();
+
+	void DeleteEdge(int32 curveID, int32 segID, int32 frame, bool correctBezierHandles = true);
+
+	void DeleteShape(int32 id);
+	void LowerShape(int32 id, bool toBottom);
+	void RaiseShape(int32 id, bool toTop);
+	void PlaceShapeAbove(int32 shapeIDToMove, int32 shapeIDFixed);
+	void PlaceShapeBehind(int32 shapeIDToMove, int32 shapeIDFixed);
+	void StoreShapeOrder();
+	int32 IsShapeValid(M_Shape *shape);
+	int32 CombineShapes(M_Shape *shape1, M_Shape *shape2, int32 comboMode, real blendFactor, bool keepOriginals);
+	int32 BakeCombinedShapes(M_Shape* shape, bool keepOriginals);
+
+	void AddGroup(const char *name);
+	void SelectGroup(const char *name);
+	void DeleteGroup(const char *name);
+
+	void EnableCleanup(bool on, bool guaranteedClean = false);
+
+	int32 GetPointID @ PointID(M_Point *point);
+	int32 GetCurveID @ CurveID(M_Curve *curve);
+	int32 GetShapeID @ ShapeID(M_Shape *shape);
+	int32 GetGroupID @ GroupID(M_PointGroup *group);
+};
+
+/**********************************************************************/
+/*** Skeletons and Bones ***/
+
+#define Mc_FLEXI_BINDING @ FLEXI_BINDING
+#define Mc_REGION_BINDING @ REGION_BINDING
+
+class M_Bone {
+	const char *Name();
+	void SetName(const char *name);
+
+	void	SetTags(int32 tags);
+	int32	Tags();
+	void	ShowLabel(bool b);
+	bool	IsLabelShowing();
+	void	EnableArcSolver(bool b);
+	bool	IsArcSolverEnabled();
+	bool	IsZeroLength();
+	real	DisplayWidth(real displayScale);
+
+	bool	HasSelectedKeys();
+	void	DeselectKeys();
+
+	real	ParentalFlipFactor();
+
+	bool	IsGroupVisible();
+
+	bool	AreDynamicsActive();
+	real	AngleWeight();
+	void	SetAngleWeight(real w);
+	real	PosWeight();
+	void	SetPosWeight(real w);
+	real	ScaleWeight();
+	void	SetScaleWeight(real w);
+
+	bool		fSelected;
+	bool		fHidden;
+	bool		fShy;
+
+	LM_String	fName;
+	int32		fParent;
+	int32		fAngleControlParent;
+	real		fAngleControlScale;
+	int32		fAngleControlDelay;
+	int32		fPosControlParent;
+	LM_Vector2	fPosControlScale;
+	int32		fPosControlDelay;
+	int32		fScaleControlParent;
+	real		fScaleControlScale;
+	int32		fScaleControlDelay;
+	real		fLength;
+	real		fStrength;
+	bool		fIgnoredByIK;
+	real		fPhysicsRadius;
+	bool		fPhysicsReturnToZero;
+	AnimVal		fPhysicsMotorSpeed;
+	real		fPhysicsTorque;
+	bool		fPhysicsLockTip;
+	LM_Vector2	fOffset;
+	bool		fFixedAngle;
+	int32		fScalingMode; // 0:manual, 1:two-dimensional, 2:squash/stretch
+	AnimVec2	fAnimPos;
+	AnimVal		fAnimAngle;
+	AnimVal		fAnimScale;
+	AnimBool	fFlipH;
+	AnimBool	fFlipV;
+	bool		fConstraints;
+	real		fMinConstraint;
+	real		fMaxConstraint;
+	real		fSquashStretchScaling;
+	real		fMaxAutoScaling;
+
+	LM_Vector2	fPos;
+	real		fAngle;
+	real		fScale;
+
+	LM_Vector2	fTempPos;
+	real		fTempLength;
+	real		fTempAngle;
+	real		fTempScale;
+
+	AnimVal		fTargetBone;
+	AnimVal		fAnimParent;
+
+	AnimBool	fIKLock;
+	AnimVec2	fIKParentTarget;
+	AnimVal		fIKGlobalAngle;
+
+	AnimBool	fBoneDynamics;
+	bool		fAngleDynamics;
+	bool		fPosDynamics;
+	bool		fScaleDynamics;
+	bool		fWindDynamics;
+	real		fAngleTorqueForce;
+	real		fAngleSpringForce;
+	real		fAngleDampingForce;
+	real		fPosTorqueForce;
+	real		fPosSpringForce;
+	real		fPosDampingForce;
+	real		fScaleTorqueForce;
+	real		fScaleSpringForce;
+	real		fScaleDampingForce;
+
+	LM_Matrix	fRestMatrix;
+	LM_Matrix	fMovedMatrix;
+	LM_Matrix	fPtMatrix;
+};
+
+class M_BoneGroup {
+public:
+	const char *Name();
+	void SetName(const char *name);
+	
+	int32 GetNumBones @ CountBones();
+	M_Bone *GetBone @ Bone(int32 id);
+	M_Bone *GetActiveBone @ ActiveBone();
+	bool ContainsBoneID(int32 boneID);
+	void AddBone(int32 boneID);
+	void RemoveBone(int32 boneID);
+
+	AnimVal		fActiveBone;
+	bool		fEnabled;
+};
+
+class M_Skeleton {
+	int32 GetNumBones @ CountBones();
+	int32 GetNumVisibleBones @ CountVisibleBones();
+	M_Bone *GetBone @ Bone(int32 id);
+	M_Bone *GetBone @ BoneByName(const char *name);
+	int32 GetBoneID @ BoneID(M_Bone *bone);
+	int32 SelectedBoneID();
+
+	void SelectNone();
+	void SelectAll();
+	void SelectInverse();
+	void SelectConnected();
+
+	void UpdateBoneMatrix(int32 id = -1);
+
+	M_Bone *AddBone(int32 frame);
+	void DeleteBone(int32 id, int32 recursion = 0);
+	void MakeBoneNameUnique(int32 id);
+	int32 CountBoneChildren(int32 id, bool ignoreControlledBones = false);
+	int32 GetFirstChildBone(int32 id, bool ignoreControlledBones = false);
+	bool IsBoneChild(int32 boneID, int32 childID);
+	bool IsBoneIKChild(int32 boneID, int32 childID);
+	bool IsBoneParent(int32 boneID, int32 parentID);
+	bool IsAncestorSelected(int32 id);
+
+	int32 NearestBone(LM_Vector2 vec);
+	real BoneInfluence(int32 boneID, LM_Vector2 sampleVec, bool normalize = false);
+
+	int32 TargetOfBone(int32 id, int32 frame);
+	bool IsBoneATarget(int32 id, int32 frame);
+	int32 TargetOfBoneChain(int32 id, int32 frame);
+	bool HasTargetedChildren(int32 id, int32 frame);
+
+	int32 GetNumGroups @ CountGroups();
+	M_BoneGroup *GetGroup @ Group(int32 id);
+	M_BoneGroup	*FirstSelectedGroup();
+	M_BoneGroup *AddGroup(int32 frame);
+	void DeleteGroup(M_BoneGroup *group);
+	void DeleteGroupByID(int32 id);
+	M_BoneGroup *GroupForBone(int32 boneID, bool considerParents = true);
+	bool IsBoneInAGroup(int32 boneID);
+	bool IsBoneActiveInAGroup(int32 boneID);
+	void MarkGroupVisibilityUnknown();
+
+	void LockBone(int32 id, int32 frame);
+	void UnlockBone(int32 id, int32 frame);
+
+	void FlipBone(int32 id, bool horizontal); // flips the given bone at frame zero (and all the following animation angles and positions of it and its children)
+
+	void IKAngleSolver(int32 boneID, LM_Vector2 target, int32 iterMultiplier = 1, bool allowTwoBoneShortcut = false, bool allowBoneStretching = false);
+
+	int32	fBindingMode;
+};
+
+/**********************************************************************/
+/*** 3D Mesh ***/
+
+class M_Face3D {
+	int32		numP;
+	int32		p1;
+	int32		p2;
+	int32		p3;
+	int32		p4;
+	int32		n1;
+	int32		n2;
+	int32		n3;
+	int32		n4;
+	int32		t1;
+	int32		t2;
+	int32		t3;
+	int32		t4;
+	int32		matID;
+	LM_Vector3	normal;
+	int32		groupTag;
+};
+
+class M_Material3D {
+	LM_String		name;
+	bool			selected;
+	rgb_color		color;
+	bool			drawEdges;
+	rgb_color		edgeColor;
+	real			edgeWidth;
+	LM_Path			lua_texturePath @ texturePath;
+	LM_Path			lua_opacityPath @ opacityPath;
+
+	LM_Path& GetTexturePath( LM_SecureAccess **outAccess = NULL );
+	LM_Path& GetOpacityPath( LM_SecureAccess **outAccess = NULL );
+	
+	void SetTexturePath( const char *path, LM_SecureAccess *copyFromAccess = NULL );
+	void SetOpacityPath( const char *path, LM_SecureAccess *copyFromAccess = NULL );
+};
+
+class M_Mesh3D {
+	M_Mesh3D();
+	~M_Mesh3D();
+	static M_Mesh3D *new_local();
+
+	void Empty @ Clear();
+
+	void SetDefaultColor(rgb_color col);
+	rgb_color DefaultColor();
+	void SetDefaultEdgeColor(rgb_color col);
+	rgb_color DefaultEdgeColor();
+	void SetDefaultEdgeWidth(real width);
+	real DefaultEdgeWidth();
+
+	void SetClockwise(bool b);
+	bool Clockwise();
+
+	int32 CountPoints();
+	LM_Vector3 Point(int32 id);
+	int32 AddPoint(LM_Vector3 &vec);
+	int32 AddUniquePoint(LM_Vector3 &vec);
+	void RemovePoint(int32 id);
+	void SetPoint(int32 id, LM_Vector3 &vec);
+
+	int32 CountNormals();
+	LM_Vector3 Normal(int32 id);
+	void AddNormal(const LM_Vector3 &vec);
+	void RemoveNormal(int32 id);
+	void SetNormal(int32 id, LM_Vector3 &vec);
+	void RebuildNormals(bool overrideExisting);
+	
+	int32 CountTexturePoints();
+	LM_Vector2 TexturePoint(int32 id);
+	void AddTexturePoint(const LM_Vector2 &vec);
+	void RemoveTexturePoint(int32 id);
+
+	int32 CountFaces();
+	M_Face3D *Face(int32 id);
+	void AddFace(int32 p1, int32 p2, int32 p3);
+	void AddFace(int32 p1, int32 p2, int32 p3, int32 p4);
+	void AddFaceWithTexture(int32 p1, int32 p2, int32 p3);
+	void AddFaceWithTexture(int32 p1, int32 p2, int32 p3, int32 p4);
+	void RemoveFace(int32 id);
+
+	int32 CountMaterials();
+	M_Material3D *Material(int32 id);
+	M_Material3D *CreateNewMaterial(const char *name=NULL);
+	void AddMaterial(M_Material3D *m);
+	void RemoveMaterial(int32 id);
+	void SetCurMaterial(int32 id);
+
+	void RebuildEdgeList();
+
+	void ScaleToRadius(real r);
+	void ImportOBJ(const char *path);
+	void ExportOBJ(const char *path);
+};
+
+} // end MOHO module

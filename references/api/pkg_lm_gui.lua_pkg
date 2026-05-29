@@ -1,0 +1,486 @@
+$#include "lm_pkg_lm_gui.h"
+/* tolua -o pkg_lm_gui.cpp -H pkg_lm_gui.h pkg_lm_gui.lua_pkg */
+
+typedef int				int32;
+typedef unsigned int	uint32;
+typedef float			real;
+
+
+
+module LM { // begin module
+module GUI { // begin module
+
+/**********************************************************************/
+/*** Key Codes ***/
+
+#define LM_KEY_RETURN @ KEY_RETURN
+#define LM_KEY_ESCAPE @ KEY_ESCAPE
+#define LM_KEY_TAB @ KEY_TAB
+#define LM_KEY_BACKSPACE @ KEY_BACKSPACE
+#define LM_KEY_DELETE @ KEY_DELETE
+#define LM_KEY_HOME @ KEY_HOME
+#define LM_KEY_END @ KEY_END
+#define LM_KEY_PAGEUP @ KEY_PAGEUP
+#define LM_KEY_PAGEDOWN @ KEY_PAGEDOWN
+#define LM_KEY_LEFT @ KEY_LEFT
+#define LM_KEY_UP @ KEY_UP
+#define LM_KEY_RIGHT @ KEY_RIGHT
+#define LM_KEY_DOWN @ KEY_DOWN
+#define LM_KEY_F1 @ KEY_F1
+#define LM_KEY_F2 @ KEY_F2
+#define LM_KEY_F3 @ KEY_F3
+#define LM_KEY_F4 @ KEY_F4
+#define LM_KEY_F5 @ KEY_F5
+#define LM_KEY_F6 @ KEY_F6
+#define LM_KEY_F7 @ KEY_F7
+#define LM_KEY_F8 @ KEY_F8
+#define LM_KEY_F9 @ KEY_F9
+#define LM_KEY_F10 @ KEY_F10
+#define LM_KEY_F11 @ KEY_F11
+#define LM_KEY_F12 @ KEY_F12
+#define LM_KEY_BIND @ KEY_BIND
+#define LM_KEY_DESELECT @ KEY_DESELECT
+
+/**********************************************************************/
+/*** Mouse Buttons ***/
+#define LM_BUT_LEFT	@ BUT_LEFT
+#define LM_BUT_RIGHT @ BUT_RIGHT
+#define LM_BUT_MIDDLE @ BUT_MIDDLE
+
+/**********************************************************************/
+/*** Miscellaneous Support Stuff ***/
+
+extern char *LM_OpenFileDialog @ OpenFile(const char *caption);
+extern char *LM_SaveFileDialog @ SaveFile(const char *caption);
+extern char *LM_SelectFolder @ SelectFolder(const char *caption);
+
+class LM_Message {
+	LM_Message();
+	~LM_Message();
+	static LM_Message *new_local();
+
+	int32	fWhat;
+	
+	int32 CountKeys();
+	const char *GetKeyName(int32 keyID);
+	void ClearKeys();
+	bool HasKey(const char *key);
+	void Remove(const char* key);
+
+	void Set(const char *key, const char *value);
+	const char *GetString(const char *key);
+
+	void Set(const char *key, bool value);
+	bool GetBool(const char *key);
+
+	void Set(const char *key, int32 value);
+	int32 GetInt(const char *key);
+
+	void Set(const char *key, real value);
+	real GetFloat(const char *key);
+
+	void Set(const char *key, rgb_color value);
+	rgb_color GetColor(const char *key);
+
+	void Set(const char *key, LM_Point value);
+	LM_Point GetPoint(const char *key);
+
+	void Set(const char *key, LM_Vector2 value);
+	LM_Vector2 GetVector2(const char *key);
+
+	void Set(const char *key, LM_Vector3 value);
+	LM_Vector3 GetVector3(const char *key);
+
+	void Set(const char *key, LM_Rect value);
+	LM_Rect GetRect(const char *key);
+
+	void Set(const char *key, LM_Message *value);
+	LM_Message *GetMessage(const char *key);
+
+	void SetPtr(const char *key, void *value);
+	void *GetPtr(const char *key);
+};
+
+/**********************************************************************/
+/*** Graphics ***/
+
+#define LM_VIEW_MODE_PIXEL @ VIEW_MODE_PIXEL
+#define LM_VIEW_MODE_VECTOR @ VIEW_MODE_VECTOR
+
+class LM_Graphics {
+	// underlying image properties
+	int32 Width();
+	int32 Height();
+
+	// graphics state functions
+	void SetColor(const rgb_color &color);
+	void SetColor(int32 r, int32 g, int32 b, int32 a = 255);
+	void SetPenWidth(int32 w);
+	void SetSmoothing(bool value);
+	void SetBezierTolerance(real pixels);
+
+	// display transformation
+		// pixel <-> world coordinate transformations
+	void ScreenToWorld(LM_Point &where, LM_Vector2 &pt);
+	void ScreenToWorld(LM_Point &where, LM_Vector3 &pt);
+	bool WorldToScreen(LM_Vector2 &pt, LM_Point &where);
+	bool WorldToScreen(LM_Vector2 &pt, LM_Vector2 &where);
+		// transform stack
+	void SetViewMode(int32 mode);
+	int32 ViewMode();
+	void SetViewOffset(real offsetX, real offsetY);
+	LM_Vector2 ViewOffset();
+	void SetViewZoom(real z);
+	real ViewZoom();
+	void SetViewPixelScaling(int32 pixelScaling);
+	int32 ViewPixelScaling();
+	void SetViewRotation(real angle);
+	real ViewRotation();
+	void BeginDraw();
+	void Push();
+	void Pop();
+	LM_Matrix CurrentTransform();
+	void Translate(real dx, real dy);
+	void Scale(real sx, real sy);
+	void Rotate(real angle);
+	void ApplyMatrix(const LM_Matrix &matrix);
+	real CurrentScale(bool ignoreZoom);
+	void EndDraw();
+
+	// picking functions
+	void BeginPicking(LM_Point where, int32 pickWidth);
+	bool Pick();
+	bool IsFullWhite(LM_Point where);
+
+	void SelectionRect(LM_Rect r, bool fillRect = false);
+
+	// drawing functions
+	void Clear(int32 r, int32 g, int32 b, int32 a = 255);
+		// line-drawing functions
+	void MoveTo(real x, real y);
+	void MoveTo(int32 x, int32 y);
+	void LineTo(real x, real y);
+	void LineTo(int32 x, int32 y);
+	void DrawLine(real x1, real y1, real x2, real y2);
+	void DrawFatLine(real width, real x1, real y1, real x2, real y2);
+	void DrawFatLine2(real width1, real width2, real x1, real y1, real x2, real y2);
+		// shape functions
+	void BeginShape();
+	void AddLine(LM_Vector2 &end1, LM_Vector2 &end2);
+	void EndShape();
+		// oval functions
+	void FrameOval(LM_Rect &r);
+	void FillOval(LM_Rect &r);
+	void FrameCircle(LM_Vector2 &center, real radius);
+	void FillCircle(LM_Vector2 &center, real radius);
+	void FrameCirclePixelRadius(LM_Vector2 &center, int32 radius);
+	void FillCirclePixelRadius(LM_Vector2 &center, int32 radius);
+		// miscellaneous functions
+	void DrawMarker(real xf, real yf);
+	void DrawFatMarker(real xf, real yf, real radius);
+	void DrawDiamondMarker(real xf, real yf, real radius);
+	void DrawDiamondMarker(real xf, real yf, real zf, real radius);
+	bool FloodFill(int32 seedX, int32 seedY);
+};
+
+class LM_Graphics_OpenGL_Fixed : public LM_Graphics {
+	bool GPUMode();
+};
+
+/**********************************************************************/
+/*** Widgets ***/
+
+#define LM_FOLLOW_LEFT @ FOLLOW_LEFT
+#define LM_FOLLOW_TOP @ FOLLOW_TOP
+#define LM_FOLLOW_RIGHT @ FOLLOW_RIGHT
+#define LM_FOLLOW_BOTTOM @ FOLLOW_BOTTOM
+
+#define LM_DEFAULT_PADDING @ DEFAULT_PADDING
+#define LM_DEFAULT_INDENT @ DEFAULT_INDENT
+
+#define LM_ALIGN_LEFT @ ALIGN_LEFT
+#define LM_ALIGN_TOP @ ALIGN_TOP
+#define LM_ALIGN_CENTER @ ALIGN_CENTER
+#define LM_ALIGN_RIGHT @ ALIGN_RIGHT
+#define LM_ALIGN_BOTTOM @ ALIGN_BOTTOM
+#define LM_ALIGN_FILL @ ALIGN_FILL
+
+class LM_View {
+	int32 Width();
+	int32 Height();
+
+	bool IsMouseDragging(uint32 button = 0);
+
+	void Enable(bool enable);
+	bool IsEnabled();
+	
+	void SetCursor(LM_Cursor *cursor);
+	void SetToolTip(const char *tooltip);
+};
+
+class LM_BaseWidget : public LM_View {
+	void Redraw();
+};
+
+class LM_StaticText : public LM_BaseWidget {
+};
+
+class LM_DynamicText : public LM_BaseWidget {
+	void SetValue(const char *text);
+	void SetValue(int32 i);
+	void SetValue(real f);
+};
+
+class LM_Divider : public LM_BaseWidget {
+};
+
+class LM_Button : public LM_BaseWidget {
+	void SetValue(bool value);
+	bool Value();
+
+	void SetLabel(const char *label, bool adjustSize = true);
+	void SetImage(const LM_image *img, int32 desiredImageWidth = 0, int32 desiredImageHeight = 0, bool redraw = true);
+	void ReplaceImage(const char *path, bool recolor = false);
+	void SetToolTip(const char *tooltip);
+	void SetContinuousMessages(real intervalSecs);
+	void SetAlternateMessage(int32 altMsg); // this message will get sent if the user holds down the alt key while clicking the button
+	void SetAltMessage(int32 altMsg); // (same as above, but with better naming now that we support Shift and Ctrl too)
+	void SetShiftMessage(int32 alternateMsg); // this message will get sent if the user holds down the shift key while clicking the button
+	void SetCtrlMessage(int32 alternateMsg); // this message will get sent if the user holds down the ctrl key while clicking the button
+};
+
+class LM_ShortButton : public LM_BaseWidget {
+	void SetLabel(const char *label);
+	void SetAltMessage(int32 altMsg); // this message will get sent if the user holds down the alt key while clicking the button
+	void SetShiftMessage(int32 shiftMsg); // this message will get sent if the user holds down the shift key while clicking the button
+	void SetCtrlMessage(int32 ctrlMsg); // this message will get sent if the user holds down the ctrl key while clicking the button
+};
+
+class LM_CheckBox : public LM_BaseWidget {
+	void SetValue(bool value);
+	bool Value();
+};
+
+class LM_RadioButton : public LM_BaseWidget {
+	void SetValue(bool value);
+	bool Value();
+};
+
+#define LM_FIELD_TEXT @ FIELD_TEXT
+#define LM_FIELD_INT @ FIELD_INT
+#define LM_FIELD_FLOAT @ FIELD_FLOAT
+#define LM_FIELD_UINT @ FIELD_UINT
+#define LM_FIELD_UFLOAT @ FIELD_UFLOAT
+#define LM_FIELD_NODIGITS @ FIELD_NODIGITS
+
+#define LM_UNIT_NONE @ UNIT_NONE
+#define LM_UNIT_PERCENT @ UNIT_PERCENT
+#define LM_UNIT_PIXELS @ UNIT_PIXELS
+#define LM_UNIT_DEGREES @ UNIT_DEGREES
+#define LM_UNIT_FPS @ UNIT_FPS
+#define LM_UNIT_MULT @ UNIT_MULT
+#define LM_UNIT_FRAMES @ UNIT_FRAMES
+
+class LM_TextControl : public LM_BaseWidget {
+	void SetValue(const char *text);
+	void SetValue(int32 i);
+	void SetValue(real f);
+	void SetWheelInc(real f);
+	void SetWheelInteger(bool b);
+	const char *Value();
+	int32 IntValue();
+	real FloatValue();
+
+	void SetConstantMessages(bool b);
+
+	void SetUnits(int32 unitType);
+	void SetPercentageMode(bool percentageMode);
+	void SetMaxDecimalPlaces(int32 n);
+};
+
+class LM_Menu : public LM_Layer {
+	void AddItem(const char *label, char shortcut, int32 msg);
+	void AddItemAlphabetically(const char *label, char shortcut, int32 msg);
+	void InsertItem(int32 atIndex, const char *label, char shortcut, int32 msg);
+	int32 CountItems();
+	void RemoveAllItems();
+
+	void SetEnabled(int32 msg, bool enabled);
+	bool IsEnabled(int32 msg);
+	void SetChecked(int32 msg, bool checked);
+	void SetChecked @ SetCheckedLabel(const char *label, bool checked);
+	bool IsChecked(int32 msg);
+	void UncheckAll();
+	int32 FirstChecked();
+	int32 FirstCheckedMsg();
+	const char *FirstCheckedLabel();
+	const char *ItemLabel(int32 msg);
+};
+
+class LM_PopupMenu : public LM_BaseWidget {
+	void SetMenu(LM_Menu *menu);
+	LM_Menu *Menu();
+};
+
+class LM_PopupDialog : public LM_BaseWidget {
+	void SetDialog(LM_Dialog *dialog);
+	LM_Dialog *Dialog();
+};
+
+class LM_TextList : public LM_BaseWidget {
+	int32 CountItems();
+	const char *GetItem(int32 id);
+	void AddItem(const char *label, bool redraw = true);
+	void AddItemAlphabetically(const char *label, bool redraw = true);
+	void RemoveItem(int32 id, bool redraw = true);
+	void SetSelItem(int32 id, bool redraw = true);
+	bool SetSelItem(const char *label, bool redraw = true);
+	int32 SelItem();
+	const char *SelItemLabel();
+	void SetItemLabel(int32 id, const char *label);
+};
+
+class LM_ImageTextList : public LM_BaseWidget {
+	void Enable(bool enable);
+	int32 CountItems();
+	const char *GetItem(int32 itemIndex);
+	bool ContainsItem(const char *label);
+	void AddItem(const char *label, bool redraw = true);
+	void AddItemAlphabetically(const char *label, bool redraw = true);
+	void InsertItem(const char *label, int32 where, bool redraw = true);
+	void RemoveItem(int32 id, bool redraw = true);
+	void SetSelItem(int32 id, bool redraw = true, bool addToSelection = false);
+	bool SetSelItem(const char *label, bool redraw = true, bool addToSelection = false);
+	int32 SelItem();
+	const char *SelItemLabel();
+	void SetItemLabel(int32 id, const char *label);
+	bool AllowsMultipleSelection();
+	void SetAllowsMultipleSelection(bool allow);
+	void SetDrawsPrimarySelection(bool drawPrimary);
+	bool DrawsPrimarySelection();
+	void ScrollItemIntoView(int32 itemIndex, bool scrollToTop = false);
+	int32 NumSelectedItems();
+	const char *GetSelItem(int32 selItemIndex);
+	bool IsItemSelected(int32 itemIndex);
+};
+
+
+class LM_ColorSwatch : public LM_BaseWidget {
+	void SetValue(rgb_color color);
+	rgb_color Value();
+	void SetConstantMessages(bool b);
+	void SetModalMessages(int32 beginSelectionMsg, int32 endSelectionMsg);
+};
+
+class LM_AngleWidget : public LM_BaseWidget {
+	void SetValue(real angle);
+	real Value();
+	void AllowWrapAround(bool b);
+};
+
+class LM_Slider : public LM_BaseWidget {
+	void SetValue(int32 value);
+	int32 Value();
+	void SetRange(int32 min, int32 max);
+	void SetConstantMessages(bool b);
+	void SetFatSlider(bool b);
+	void SetShowTicks(bool b);
+	bool GetShowTicks();
+	void SetSnapToTicks(bool b); // only valid if showTicks is true
+	bool GetSnapToTicks();
+
+	void SetNumTicks(int32 numTicks);
+	int32 GetNumTicks();
+};
+
+class LM_ScrollBar : public LM_BaseWidget {
+	void SetValue(int32 value);
+	void SetValueWithMessage(int32 value);
+	int32 Value();
+	void SetRange(int32 min, int32 max);
+	void GetRange(int32 *min, int32 *max);
+	void SetStepSize(int32 smallStep, int32 largeStep);
+};
+
+/**********************************************************************/
+/*** Widget Factory ***/
+
+extern LM_StaticText *WF_StaticText @ StaticText(const char *label);
+extern LM_DynamicText *WF_DynamicText @ DynamicText(const char *label, int32 width = 0);
+extern LM_Divider *WF_Divider @ Divider(bool vertical);
+extern LM_Button *WF_Button @ Button(const char *label, int32 msg = 0);
+extern LM_ShortButton *WF_ShortButton @ ShortButton(const char *label, int32 msg = 0);
+extern LM_CheckBox *WF_CheckBox @ CheckBox(const char *label, int32 msg = 0);
+extern LM_RadioButton *WF_RadioButton @ RadioButton(const char *label, int32 msg = 0);
+extern LM_TextControl *WF_TextControl @ TextControl(int32 width, const char *text, int32 msg = 0, uint32 fieldType = LM_FIELD_TEXT, const char *label = NULL);
+extern LM_Menu *WF_Menu @ Menu(const char *title);
+extern LM_PopupMenu *WF_PopupMenu @ PopupMenu(int32 width, bool radioMode = true);
+extern LM_PopupMenu *WF_ImagePopupMenu @ ImagePopupMenu(const char *path, bool radioMode = true, bool recolor = false);
+extern LM_PopupDialog *WF_PopupDialog @ PopupDialog(const char *label, bool lockOpen = false, int32 msg = 0);
+extern LM_TextList *WF_TextList @ TextList(int32 width, int32 height, int32 msg = 0);
+extern LM_ImageTextList *WF_ImageTextList @ ImageTextList(int32 width, int32 height, int32 msg = 0);
+extern LM_ColorSwatch *WF_ColorSwatch @ ColorSwatch(bool allowAlpha, int32 msg = 0);
+extern LM_ColorSwatch *WF_ShortColorSwatch @ ShortColorSwatch(bool allowAlpha, int32 msg = 0);
+extern LM_AngleWidget *WF_AngleWidget @ AngleWidget(int32 msg = 0, bool horizontal = false);
+extern LM_Button *WF_ImageButton @ ImageButton(const char *path, const char *tooltip, bool checkbox, int32 msg = 0, bool recolor = false);
+extern LM_Cursor *WF_Cursor @ Cursor(const char *path, int32 hotX, int32 hotY);
+extern LM_Slider *WF_Slider @ Slider(int32 length, bool vertical, bool showTicks, int32 msg = 0, uint32 resizingMode = LM_FOLLOW_LEFT);
+extern LM_ScrollBar *WF_ScrollBar @ ScrollBar(int32 length, bool vertical, int32 msg, uint32 resizingMode = LM_FOLLOW_LEFT);
+
+/**********************************************************************/
+/*** Layout View ***/
+
+class LM_LayoutView : public LM_View {
+	void AddChildWithOptions @ AddChild(LM_View *view, uint32 alignment = LM_ALIGN_CENTER, int32 indent = 0);
+	void AddPadding(int32 pixels = LM_DEFAULT_PADDING); // Pass a value of 0 for flexible padding that will expand to fit available space.
+
+	void Indent(int32 amount = LM_DEFAULT_INDENT);
+	void Unindent(int32 amount = LM_DEFAULT_INDENT);
+
+	void PushH2 @ PushH(uint32 alignment = LM_ALIGN_LEFT, int32 padding = -1);
+	void PushV2 @ PushV(uint32 alignment = LM_ALIGN_LEFT, int32 padding = -1);
+	void Pop();
+};
+
+/**********************************************************************/
+/*** Dialog ***/
+
+#define MSG_OK
+#define MSG_CANCEL
+
+class LM_SimpleDialog : public LM_Dialog {
+public:
+	LM_SimpleDialog(const char *title);
+	~LM_SimpleDialog();
+
+	LM_LayoutView *GetLayout();
+	int32 DoModal();
+	void DoModeless();
+	bool ValidateFloat @ Validate(LM_TextControl *pCtrl, real low, real high);
+};
+
+$[
+-- Creates a new dialog, and attaches a set of class functions to that instance
+function LM.GUI.SimpleDialog(title, subClass)
+	local d = LM.GUI.LM_SimpleDialog:new(title)
+	for n, v in pairs(subClass) do
+		d[n] = v
+	end
+	LM.GUI.SimpleDialogRegister(d)
+	return d
+end
+$]
+
+/**********************************************************************/
+/*** Alert Box ***/
+
+#define LM_ALERT_INFO @ ALERT_INFO
+#define LM_ALERT_WARNING @ ALERT_WARNING
+#define LM_ALERT_QUESTION @ ALERT_QUESTION
+
+extern int LM_DoAlert @ Alert(int alertType,
+					   const char *str1, const char *str2 = NULL, const char *str3 = NULL,
+					   const char *but1 = "OK", const char *but2 = NULL, const char *but3 = NULL);
+
+} // end GUI module
+} // end LM module

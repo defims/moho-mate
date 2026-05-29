@@ -1,0 +1,659 @@
+---
+name: moho-mate
+description: Moho 动画软件命令行自动化工具。触发词：moho-mate、Moho 渲染、Moho 脚本、无头渲染、Lua 脚本执行、Moho IPC。
+moho_version: Moho Pro 14.3
+skill_version: 2025.05.17-v7.19
+---
+
+# Moho Mate
+
+macOS 命令行工具，自动化 Moho Pro 14 操作。
+
+---
+
+## ⚠️ Agent 行为规则
+
+**所有 Moho 工程 (.moho) 操作必须通过 moho-mate 执行，禁止直接编辑工程文件。**
+
+### 开发流程
+
+```
+快捷命令 → moho-mate render/draw/inspect
+无快捷命令 → moho-mate start project.moho script.lua
+```
+
+### IPC 规则
+
+1. IPC 模式默认 **不退出 Moho**
+2. 退出是 **可选的**：
+   - `ipc_quit()` - 脚本中退出
+   - `moho-mate quit` - 命令行退出
+   - 不退出 - Moho 保持运行，可查看结果
+3. **⚠️ IPC 脚本禁止 `moho:Quit()` → 文件损坏**
+4. **⚠️ 所有 API 调用必须先查文档** → `/Applications/Moho.app/.../Lua Interfaces`
+
+### 禁止事项
+
+- ❌ 直接编辑 .moho 文件
+- ❌ 凭印象写 Lua API（必须查文档）
+
+---
+
+## Quick Start
+
+```bash
+alias moho-mate='~/.openclaw/workspace/skills/moho-mate/scripts/moho-mate.sh'
+
+# IPC 模式
+moho-mate start project.moho          # 启动 + 打开项目
+moho-mate call 'moho:FileSave()'      # 保存
+moho-mate call 'moho:FileRender("/tmp/out.png")'  # IPC 渲染
+moho-mate quit                        # 退出
+
+# 无头渲染
+moho-mate render project.moho -f PNG -o /tmp/output
+moho-mate render project.moho --start 1 --end 72
+
+# 查看项目
+moho-mate inspect project.moho
+```
+
+---
+
+## Commands
+
+| 命令 | 说明 |
+|------|------|
+| `start [project] [script]` | 启动 IPC 服务 |
+| `call '<lua>'` | 发送 Lua 命令 |
+| `call -f script.lua` | 发送脚本文件 |
+| `quit` | 退出 Moho |
+| `render <project> [options]` | 无头渲染 |
+| `draw <shape> [output]` | 绘制形状 |
+| `inspect <project>` | 查看项目信息 |
+| `config list/backup/restore` | 配置管理 |
+
+### render 参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-f <format>` | PNG/JPEG/MP4/GIF | JPEG |
+| `-o <path>` | 输出目录 | 同项目名 |
+| `--start/--end <frame>` | 帧范围 | 项目设置 |
+| `-halfsize yes` | 半尺寸预览 | no |
+
+⚠️ **`-o` 必须是目录路径**，不能是具体文件名。文件名自动生成：`<前缀>_<5位帧号>.<格式>`
+
+```bash
+# 正确 ✅
+moho-mate render project.moho -o ~/Desktop/output_dir
+# 输出: frame1_00001.png, frame1_00002.png, ...
+
+# 错误 ❌
+moho-mate render project.moho -o ~/Desktop/output.png
+```
+
+### draw 形状
+
+| 形状 | 说明 |
+|------|------|
+| circle | 蓝色圆形 |
+| bunny | 白兔（7部件） |
+| puppy | 金狗（7部件） |
+
+---
+
+## Moho API 快速参考
+
+### 文档对象访问
+
+```lua
+local doc = moho.document  -- 文档对象
+local layer = doc:Layer(0)  -- 获取图层
+local meshLayer = moho:LayerAsVector(layer)  -- 转矢量层
+local mesh = meshLayer:Mesh()  -- 获取 mesh
+local shape = mesh:Shape(0)  -- 获取形状
+```
+
+### Moho 方法
+
+⚠️ **重要**：`CreateNewLayer` 是 **moho 对象的方法**（ScriptInterface），不是 MohoDoc 的方法。
+
+| 方法 | 说明 |
+|------|------|
+| `CreateNewLayer(layerType, undoable)` | 创建新图层 ✅ |
+| `DuplicateLayer(layer)` | 复制图层 ✅ |
+| `DeleteLayer(layer)` | 删除图层 |
+| `FileNew()` | 新建文档 |
+| `FileOpen(path)` | 打开文档 |
+| `FileSave()` | 保存 |
+| `FileSaveAs(path)` | 另存为 |
+| `FileRender(path)` | IPC 渲染当前帧（.bmp/.jpg/.png/.tga） |
+| `LayerAsVector(layer)` | 转矢量层 |
+| `CreateShape(fill, outline, frame)` | 创建形状 |
+| `SetSelLayer(layer)` | 设置当前图层 |
+| `DrawingMesh()` | 获取当前图层的 Mesh |
+
+**创建图层示例**：
+```lua
+-- ✅ 正确：使用 moho 对象的方法
+local layer = moho:CreateNewLayer(MOHO.LT_VECTOR)
+layer:SetName("MyLayer")
+moho:SetSelLayer(layer)  -- 设置为当前图层
+local mesh = moho:DrawingMesh()  -- 获取 Mesh
+
+-- ❌ 错误：不是 MohoDoc 的方法
+local layer = moho.document:CreateNewLayer(MOHO.LT_VECTOR)  -- 会报错
+```
+
+### MohoDoc 方法
+
+| 方法 | 说明 |
+|------|------|
+| `CountLayers()` | 图层数量 |
+| `Layer(id)` | 获取图层 |
+| `LayerByName(name)` | 按名获取 |
+| `CountStyles()` | 样式数量 |
+| `StyleByID(id)` | 获取样式 |
+| `Style(name)` | 按名获取样式 |
+| `Refresh()` | 刷新显示 |
+| `Width()/Height()` | 文档尺寸 |
+
+### MohoLayer 方法
+
+| 方法 | 说明 |
+|------|------|
+| `Name()` | 图层名 |
+| `LayerType()` | 图层类型 |
+| `FreeCachedImage()` | 释放缓存 |
+| `UpdateCurFrame(extended)` | 更新当前帧 |
+
+### M_Mesh 方法
+
+| 方法 | 说明 |
+|------|------|
+| `CountPoints()` | 点数 |
+| `CountShapes()` | 形数 |
+| `CountCurves()` | 曲线数 |
+| `Point(id)` | 获取点 |
+| `Shape(id)` | 获取形状 |
+| `Curve(id)` | 获取曲线对象 |
+| `CurveID(curve)` | 获取曲线 ID |
+| `AddLonePoint(v, frame)` | 创建孤立起点 |
+| `AppendPoint(v, frame)` | 在曲线末尾添加 |
+| `AddPoint(v, curveID, segID, frame)` | **在曲线中间插入点** ✅ |
+| `AddPoint(v, attachID, frame)` | 从指定点开始新曲线 |
+| `WeldPoints(p1, p2, frame)` | 焊接闭合（⚠️ 需要两点相邻） |
+| `DeletePoint(id)` | 删除点 |
+| `SelectNone()` | 取消选择 |
+
+---
+
+## ⚠️ AddLonePoint/AppendPoint 行为机制（2026-05-17 验证）
+
+**关键发现：AddLonePoint 后 CountPoints 返回 0**
+
+这是 Moho 的设计行为，不是 bug：
+
+| 操作 | CountPoints 返回 | 实际状态 |
+|------|-----------------|----------|
+| `AddLonePoint` | 0 | 点已创建，但未计入曲线（孤立点）|
+| 1st `AppendPoint` | 2 | 起点 + 新点都计入曲线 |
+| 2nd `AppendPoint` | 3 | 正常累加 |
+| 后续 `AppendPoint` | N+1 | 正常累加 |
+
+**原理**：
+- `AddLonePoint` 创建"孤立点"，尚未形成曲线结构
+- `CountPoints` 只计算曲线上的点
+- `AppendPoint` 将点连接形成曲线后，计数才更新
+- 第一个 AppendPoint 同时将起点和新点计入 → CountPoints = 2
+
+**官方脚本的正确做法**：
+```lua
+-- 1. 记录添加前的点数
+local n = mesh:CountPoints()  -- 通常为 0
+
+-- 2. 绘制所有点
+mesh:AddLonePoint(v1, frame)
+mesh:AppendPoint(v2, frame)
+mesh:AppendPoint(v3, frame)
+...
+
+-- 3. Weld 闭合
+mesh:WeldPoints(lastPt, n, frame)  -- n 是起点 ID
+
+-- 4. 绘制完后用 Point(n), Point(n+1)... 访问新点
+mesh:Point(n):SetCurvature(MOHO.SMOOTH, frame)
+mesh:Point(n+1):SetCurvature(MOHO.SMOOTH, frame)
+```
+
+**⚠️ 常见错误**：
+```lua
+-- ❌ 错误：AddLonePoint 后立即访问点
+mesh:AddLonePoint(v, frame)
+mesh:Point(0):SetCurvature(MOHO.SMOOTH, frame)  -- nil 错误！
+
+-- ✅ 正确：绘制完后再访问
+mesh:AddLonePoint(v1, frame)
+mesh:AppendPoint(v2, frame)
+-- 现在可以用 Point(0), Point(1) 访问
+```
+
+---
+
+---
+
+## ⚠️ AddPoint API 关键说明
+
+**在已有曲线上插入点**（2026-05-16 验证）:
+
+```lua
+void AddPoint(LM_Vector2 &pos, int32 attachCurve, int32 attachSeg, int32 frame, bool correctBezierHandles = true, bool preserveCorners = false)
+```
+
+**参数说明：**
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `pos` | LM_Vector2 | 新点位置 |
+| `attachCurve` | int32 | **曲线 ID**（⚠️ 不是点 ID！） |
+| `attachSeg` | int32 | 线段 ID（**-1 = 自动选择最近线段**） |
+| `frame` | int32 | 动画帧 |
+
+---
+
+**获取曲线 ID：**
+
+```lua
+-- 方法 1：简单形状（推荐）
+local curveID = 0  -- 第一条曲线
+mesh:AddPoint(pos, curveID, -1, frame)  -- -1 自动选择最近线段
+
+-- 方法 2：复杂形状
+local numCurves = mesh:CountCurves()
+local point = mesh:Point(pointID)
+local numPointCurves = point:CountCurves()  -- 点连接的曲线数
+if numPointCurves > 0 then
+    local curve, where = point:Curve(0)
+    local curveID = mesh:CurveID(curve)
+end
+```
+
+---
+
+**❌ 常见错误：使用点 ID 作为 curveID**
+
+```lua
+-- ❌ 错误：会导致 Moho 崩溃
+mesh:AddPoint(v, pointID, -1, frame)  -- pointID 不是 curveID
+
+-- ✅ 正确
+mesh:AddPoint(v, 0, -1, frame)       -- curveID = 0
+```
+
+### M_Shape 属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `fMyStyle` | M_Style | 自定义样式 |
+| `fHasOutline` | bool | 显示描边 |
+| `fHasFill` | bool | 显示填充 |
+| `fInheritedStyle` | M_Style | 继承样式 |
+
+### M_Style 属性
+
+⚠️ **`fLineWidth` 是相对单位，不是像素！**
+
+公式：`显示线宽 = 文档高度 × fLineWidth`
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `fDefineLineWidth` | bool | 启用自定义线宽 |
+| `fLineWidth` | real | 线宽（相对值 = 目标px / 文档高度） |
+| `fDefineLineCol` | bool | 启用自定义描边色 |
+| `fLineCol` | AnimColor | 描边色 |
+| `fDefineFillCol` | bool | 启用自定义填充色 |
+| `fFillCol` | AnimColor | 填充色 |
+
+---
+
+## ⚠️ 渐变填充 API（2026-05-16 验证）
+
+```lua
+-- 设置渐变类型
+shape.fMyStyle:SetGradient(MOHO.GRADIENT_LINEAR, false)
+
+-- 设置渐变颜色点
+-- position: 0.0 = 起点, 1.0 = 终点
+local col = LM.ColorVector:new_local()
+col:Set(r, g, b, a)  -- RGBA (0-1范围)
+shape.fMyStyle:SetGradientColor(position, col:AsColorStruct())
+```
+
+**渐变类型常量：**
+```lua
+MOHO.GRADIENT_LINEAR   -- 线性渐变
+MOHO.GRADIENT_RADIAL   -- 径向渐变
+```
+
+**完整示例：**
+```lua
+local shape = mesh:Shape(0)
+shape.fHasFill = true
+
+-- 渐变：Linear
+shape.fMyStyle:SetGradient(MOHO.GRADIENT_LINEAR, false)
+
+-- 顶部绿色 → 中间深绿 → 底部棕色
+local col = LM.ColorVector:new_local()
+col:Set(0.35, 0.6, 0.25, 1.0)
+shape.fMyStyle:SetGradientColor(0.0, col:AsColorStruct())
+
+col:Set(0.25, 0.45, 0.18, 1.0)
+shape.fMyStyle:SetGradientColor(0.5, col:AsColorStruct())
+
+col:Set(0.4, 0.25, 0.15, 1.0)
+shape.fMyStyle:SetGradientColor(1.0, col:AsColorStruct())
+```
+
+---
+
+**其他样式效果：**
+```lua
+-- 柔化边缘
+shape.fMyStyle:SetSoftEdge(0.15)
+
+-- 描边柔化
+shape.fMyStyle:SetStrokeSoftEdge(0.1)
+```
+
+### AnimColor 方法
+
+| 方法 | 说明 |
+|------|------|
+| `GetValue(frame)` | 获取颜色值（返回 {r,g,b,a}） |
+| `SetValue(frame, rgb_color)` | 设置颜色 |
+
+### 图层类型常量
+
+| 常量 | 说明 |
+|------|------|
+| `MOHO.LT_MESH` | 矢量网格层 |
+| `MOHO.LT_IMAGE` | 图像层 |
+| `MOHO.LT_BONE` | 骨骼层 |
+| `MOHO.LT_GROUP` | 分组层 |
+| `MOHO.LT_SWITCH` | 切换层 |
+
+---
+
+## Lua 脚本关键
+
+### 样式与描边
+
+⚠️ **重要：`fLineWidth` 是相对单位，不是像素！**
+
+**公式**：
+```
+显示线宽 = 文档高度 × fLineWidth
+```
+
+| 文档高度 | fLineWidth 设置 | 显示线宽 |
+|----------|------------------|--------------|
+| 720px | 4.0 (直接设置) | 720 × 4 = **2880px** ❌ |
+| 720px | 4/720 = 0.0056 | 720 × 0.0056 = **4px** ✅ |
+
+**正确设置线宽**：
+```lua
+-- ✅ 正确：根据文档高度计算
+local docHeight = moho.document:Height()
+local myStyle = shape.fMyStyle
+myStyle.fDefineLineWidth = true
+myStyle.fLineWidth = 4.0 / docHeight  -- 4/720 ≈ 4px
+```
+
+**fDefineLineWidth 行为**：
+| 值 | 实际渲染效果 |
+|----|------------------|
+| true (默认) | 使用 fLineWidth 值 |
+| false | 使用全局默认线宽 |
+
+**CreateShape 默认值**：
+- `fDefineLineWidth = true`
+- `fLineWidth = 4 / 文档高度 ≈ 4px`
+
+```lua
+-- 调整描边宽度（正确方式）
+local docHeight = moho.document:Height()
+local myStyle = shape.fMyStyle
+myStyle.fDefineLineWidth = true
+myStyle.fLineWidth = 4.0 / docHeight  -- 4px
+
+-- 或修改样式库
+local style0 = doc:StyleByID(0)
+style0.fDefineLineWidth = true
+style0.fLineWidth = 4.0 / docHeight
+
+-- 开关描边
+shape.fHasOutline = true/false
+
+-- 获取颜色
+local fillCol = myStyle.fFillCol:GetValue(0)
+print("填充: R=" .. fillCol.r .. " G=" .. fillCol.g)
+
+-- ⚠️ 修改后必须刷新+保存
+layer:FreeCachedImage()
+layer:UpdateCurFrame(true)
+doc:Refresh()
+moho:FileSave()
+```
+
+### IPC 渲染
+
+```lua
+-- 渲染当前帧
+moho:FileRender("/tmp/output.png")
+
+-- 渲染单图层
+local options = MohoLayerRenderOptions:new_local()
+options.frame = 0
+options.minDimension = 1280
+options.maxDimension = 1280
+options.imageExtension = "png"
+layer:RenderLayerImage(options)
+print("输出: " .. options.imagePath)
+```
+
+### 绘制闭合图形 ⚠️
+
+**2026-05-17 验证：WeldPoints 需要两点相邻！**
+
+正确流程：
+```lua
+-- 1. 添加 N+1 点（最后一个是回到起点位置的 duplicate）
+local n = mesh:CountPoints()
+mesh:AddLonePoint(startPos, 0)    -- 起点 (ID = n)
+mesh:AppendPoint(pt2, 0)
+mesh:AppendPoint(pt3, 0)
+mesh:AppendPoint(pt4, 0)
+mesh:AppendPoint(startPos, 0)     -- duplicate 点 (ID = n+4)
+
+-- 2. WeldPoints（duplicate 和起点）
+-- 注意：AppendPoint 顺序添加，最后点和起点相邻！
+local lastPt = mesh:CountPoints() - 1
+mesh:WeldPoints(lastPt, n, 0)  -- Weld → N点闭合
+
+-- 3. 选择所有点
+mesh:SelectNone()
+for i = 0, mesh:CountPoints() - 1 do
+    mesh:Point(i).fSelected = true
+end
+
+-- 4. CreateShape
+moho:CreateShape(true, false, 0)
+```
+
+**关键理解：**
+- `AppendPoint` 顺序添加 → 最后点与起点相邻 → WeldPoints 成功
+- 如果不添加 duplicate 点，最后点与起点不相邻 → WeldPoints 失败 → CreateShape 失败
+
+⚠️ `SelectConnected()` 不稳定，必须手动选择点
+
+### 坐标设置 ⚠️
+
+**重要：不能用 Lua table 直接设置坐标！**
+
+```lua
+-- ❌ 错误：直接用 table
+mesh:AddLonePoint({x=1.0, y=2.0}, frame)
+-- 结果：坐标变成 e-38（几乎为 0），所有点挤在原点
+
+-- ✅ 正确：使用 LM.Vector2
+local v = LM.Vector2:new_local()
+v:Set(1.0, 2.0)
+mesh:AddLonePoint(v, frame)
+-- 结果：坐标正常
+```
+
+**原因：**
+- Moho API 需要 tolua 包装的对象，不是 Lua 原生 table
+- `{x=1, y=2}` 是 Lua table，不是 Vector2 对象
+- API 接收后内部指针错误，导致坐标异常
+
+**经验教训 (2026-05-16)：**
+- 所有 Moho API 的坐标参数必须用 `LM.Vector2:new_local()`
+- 创建后调用 `v:Set(x, y)` 设置值
+
+---
+
+## 知识库
+
+### Moho 脚本执行模式
+
+| 模式 | 启动方式 | 脚本结构 | 退出方式 |
+|------|----------|----------|----------|
+| **命令行模式** | `Moho script.lua` | `function MohoScript(moho) ... end` | `moho:Quit()` (可选) |
+| **IPC 模式** | `moho-mate start` + `call` | 直接发送 Lua 代码片段 | `ipc_quit()` (可选) |
+
+**两种模式退出都是可选的**：
+- 不退出 → Moho 保持运行，可查看结果
+- 退出 → Moho 关闭，回到命令行
+
+### IPC 关键发现 ⚠️
+
+**tolua ScriptInterface 对象不能跨执行上下文保存！**
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| `moho.document` 是 nil | FileNew 前保存的 moho 对象 | 每次用 ScriptInterfaceHelper 获取 |
+| 操作不持久化 | 直接使用保存的 `_G.moho` | 每次调用 `helper:MohoObject()` |
+
+**正确的 IPC 命令执行方式：**
+```lua
+-- ❌ 错误：保存 moho 后直接用
+_G.moho = moho  -- FileNew 前
+moho.document   -- nil
+
+-- ✅ 正确：每次获取当前状态
+_G.ipc_execute = function(cmd)
+    local helper = MOHO.ScriptInterfaceHelper:new_local()
+    local moho = helper:MohoObject()  -- 当前文档状态
+    -- moho.document 存在 ✅
+    helper:delete()
+    -- 执行命令...
+end
+```
+
+**关键点：**
+1. `moho.document` 在 FileNew/FileOpen 后才存在
+2. tolua 对象是 Lua 包装，内部 C++ 状态可能变化
+3. ScriptInterfaceHelper 每次返回当前状态的正确引用
+
+---
+
+**IPC 修复历史 (2026-05-16)：**
+
+| 版本 | 问题 | 修复 |
+|------|------|------|
+| v1-v3 | Socket 未创建 | `ipc.start()` 先执行，再 `FileNew()` |
+| v4 | `moho.document` nil | 每次用 `ScriptInterfaceHelper:MohoObject()` |
+
+### 文件格式 (.moho)
+
+ZIP 压缩包：`Project.mohoproj` (JSON) + `preview.jpg`
+
+### 建模理念
+
+```
+节点 → 骨骼 → 动作
+（层层增强控制力）
+```
+
+⚠️ **节点是地基，不牢后面都是空谈。**
+
+### 物理动画
+
+⚠️ 物理模拟只在 GUI 播放生效，命令行渲染无效
+
+### Autosave 路径
+
+```
+~/Library/Preferences/Lost Marble/Moho Pro/14/Autosave/
+```
+
+### 官方文档
+
+- User Manual: https://manual.lostmarble.com/
+- Lua API: https://mohoscripting.com
+- 本地 API: `/Applications/Moho.app/.../Lua Interfaces`
+
+---
+
+## 版本
+
+- Moho: Pro 14.3
+- Lua: 5.4
+- moho-mate: v7.13
+---
+
+## 图层顺序调整 API（2026-05-17 验证）
+
+### PlaceLayerBehindAnother
+
+**调整根图层顺序**：
+
+```lua
+-- 将 movingLayer 放到 targetLayer 后面（下层）
+moho:PlaceLayerBehindAnother(movingLayer, targetLayer)
+
+-- 示例：
+-- Before: [LayerA, LayerB, LayerC] (C 在顶层)
+moho:PlaceLayerBehindAnother(layerC, layerA)
+-- After: [LayerC, LayerA, LayerB] (C 在底层)
+```
+
+### PlaceLayerInGroup
+
+**将图层放入 GroupLayer**：
+
+```lua
+moho:PlaceLayerInGroup(layer, groupLayer)
+
+-- 示例：
+local group = moho:CreateNewLayer(MOHO.LT_GROUP)
+local layer = moho:CreateNewLayer(MOHO.LT_VECTOR)
+moho:PlaceLayerInGroup(layer, group)
+```
+
+### GetLayerOrdering（组内图层顺序动画）
+
+```lua
+-- 启用组内图层顺序动画
+local group = moho:LayerAsGroup(groupLayer)
+group:EnableLayerOrdering(true)
+
+-- 获取 AnimString 设置顺序
+local order = group:GetLayerOrdering()
+order:SetValue(frame, "LayerC,LayerA,LayerB")
+```
+
+**注意**：图层从 GroupLayer 移出的 API 不存在。
+

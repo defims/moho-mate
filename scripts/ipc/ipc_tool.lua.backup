@@ -1,0 +1,198 @@
+-- ipc_tool.lua - Moho IPC Tool (ScriptInterfaceHelper 版)
+--
+-- 原理：
+-- 1. CFSocket 收到命令后调用 ipc_execute()
+-- 2. ipc_execute() 使用 MOHO.ScriptInterfaceHelper 获取 moho
+-- 3. 每次执行创建新 helper，用完后 delete()，稳定不崩溃
+--
+-- 用法：
+-- moho-mate run [--timeout N]    启动 IPC 服务
+-- moho-mate ipc send '<cmd>'     发送命令
+-- moho-mate ipc send -f file.lua 发送文件
+-- moho-mate ipc stop             关闭 IPC
+--
+-- 可用命令：
+-- ping()           -> 测试 IPC
+-- ipc_status()     -> 显示状态
+-- ipc_quit()       -> 关闭 Moho
+-- <任意 Lua 代码>
+
+IPC_DIR = "$IPC_DIR"
+USER_PROJECT = "$USER_PROJECT"
+USER_SCRIPT = "$USER_SCRIPT"
+IPC_TIMEOUT = tonumber("$IPC_TIMEOUT") or 3600
+
+function MohoScript(moho)
+    local log = function(msg)
+        print(msg)
+        local f = io.open("/tmp/moho_ipc.log", "a")
+        if f then f:write(os.date("%H:%M:%S") .. " " .. msg .. "\n") f:close() end
+    end
+
+    -- 清空日志
+    local f = io.open("/tmp/moho_ipc.log", "w")
+    if f then f:close() end
+
+    log("=== IPC 服务启动 ===")
+
+    -- 加载模块
+    local ipc_so = IPC_DIR .. "/moho_ipc.so"
+    package.cpath = ipc_so .. ";" .. package.cpath
+    package.loaded["moho_ipc"] = nil
+
+    local ok, ipc = pcall(require, "moho_ipc")
+    if not ok then
+        log("✗ 模块加载失败: " .. tostring(ipc))
+        return
+    end
+    log("✓ 模块已加载")
+
+    -- 创建/打开项目
+    if USER_PROJECT and USER_PROJECT ~= "" then
+        log("[1] 打开项目: " .. USER_PROJECT)
+        moho:FileOpen(USER_PROJECT)
+    else
+        log("[1] 创建新文档")
+        moho:FileNew()
+    end
+
+    -- 执行用户脚本
+    if USER_SCRIPT and USER_SCRIPT ~= "" then
+        log("[2] 执行脚本: " .. USER_SCRIPT)
+        local ok, err = pcall(function()
+            dofile(USER_SCRIPT)
+            if _G.MohoScript then
+                _G.MohoScript(moho)
+            end
+        end)
+        if not ok then
+            log("✗ 脚本错误: " .. tostring(err))
+        else
+            log("✓ 脚本完成")
+        end
+    end
+
+    -- IPC 执行函数（使用 ScriptInterfaceHelper）
+    -- 改进：捕获 print 输出 + pcall 错误捕获
+    _G.ipc_execute = function(cmd)
+        log("[IPC] 执行命令: " .. string.sub(cmd, 1, 60))
+
+        -- 创建 ScriptInterfaceHelper
+        local helper = MOHO.ScriptInterfaceHelper:new_local()
+        if not helper then
+            log("✗ ScriptInterfaceHelper 创建失败")
+            return "error|ScriptInterfaceHelper 创建失败"
+        end
+
+        -- 获取 moho 对象
+        local moho_obj = helper:MohoObject()
+        if not moho_obj then
+            log("✗ MohoObject 返回 nil")
+            helper:delete()
+            return "error|MohoObject 返回 nil"
+        end
+
+        -- 设置全局变量供命令使用
+        _G.moho = moho_obj
+        _G.LM = LM
+        _G.MOHO = MOHO
+
+        -- ===== 方案 A: 捕获 print 输出 =====
+        local output_buffer = {}
+        local original_print = _G.print
+
+        _G.print = function(...)
+            local args = {}
+            for i = 1, select("#", ...) do
+                args[i] = tostring(select(i, ...))
+            end
+            local line = table.concat(args, "\t")
+            output_buffer[#output_buffer + 1] = line
+            original_print(line)  -- 也写原始 stdout（日志可见）
+        end
+
+        -- ===== 方案 B: pcall 捕获错误 =====
+        local fn, compile_err = load(cmd)
+        if not fn then
+            log("✗ 编译错误: " .. tostring(compile_err))
+            _G.print = original_print
+            helper:delete()
+            return "error|编译错误: " .. tostring(compile_err)
+        end
+
+        local ok, result = pcall(fn)
+        _G.print = original_print  -- 恢复 print
+
+        -- 清理 helper（显式释放敏感资源）
+        helper:delete()
+
+        if not ok then
+            log("✗ 执行错误: " .. tostring(result))
+            return "error|" .. tostring(result)
+        end
+
+        -- 构建返回值：状态 + 输出
+        local output = table.concat(output_buffer, "\n")
+        if output == "" then
+            output = "(无输出)"
+        end
+
+        log("[IPC] ✓ 执行成功，输出: " .. string.sub(output, 1, 100))
+        return "ok|" .. output
+    end
+
+    -- 基础命令
+    _G.ping = function()
+        log("[IPC] ping() -> pong!")
+        return "pong"
+    end
+
+    _G.ipc_status = function()
+        local helper = MOHO.ScriptInterfaceHelper:new_local()
+        local moho_obj = helper:MohoObject()
+        local elapsed = os.time() - (_G._ipc_start_time or os.time())
+        local remaining = IPC_TIMEOUT - elapsed
+        local info = "frame=" .. (moho_obj and tostring(moho_obj.frame) or "nil") ..
+                     ", elapsed=" .. elapsed .. "s" ..
+                     ", remaining=" .. remaining .. "s"
+        helper:delete()
+        log("[IPC] status: " .. info)
+        return info
+    end
+
+    _G.ipc_quit = function()
+        log("[IPC] 收到退出命令")
+        ipc.stop()
+        local helper = MOHO.ScriptInterfaceHelper:new_local()
+        local moho_obj = helper:MohoObject()
+        if moho_obj then
+            moho_obj:Quit()
+        end
+        helper:delete()
+    end
+
+    -- 记录启动时间
+    _G._ipc_start_time = os.time()
+
+    -- 启动 IPC
+    local running, path = ipc.start()
+    if not running then
+        log("✗ IPC 启动失败")
+        return
+    end
+
+    log("✓ IPC 已启动: " .. tostring(path))
+    log("")
+    log("=== IPC 服务运行中 ===")
+    log("Socket: /tmp/moho_ipc.sock")
+    log("超时: " .. IPC_TIMEOUT .. " 秒")
+    log("")
+    log("发送命令: moho-mate ipc send '<lua>'")
+    log("关闭 Moho: moho-mate ipc send 'ipc_quit()'")
+end
+
+-- LayerScript 兼容（空实现，因为命令在 Socket 回调中直接执行）
+function LayerScript(moho)
+    -- ScriptInterfaceHelper 版不需要 LayerScript
+    -- 命令在 C 层 Socket 回调中直接调用 ipc_execute()
+end

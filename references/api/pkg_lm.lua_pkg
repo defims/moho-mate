@@ -1,0 +1,311 @@
+$#include "lm_pkg_lm.h"
+/* tolua -o pkg_lm.cpp -H pkg_lm.h pkg_lm.lua_pkg */
+
+typedef int				int32;
+typedef unsigned int	uint32;
+typedef float			real;
+
+
+
+module LM { // begin module
+
+/**********************************************************************/
+/*** Miscellaneous ***/
+
+typedef struct {
+	rgb_color();
+	~rgb_color();
+	static rgb_color *new_local();
+
+	int		r;
+	int		g;
+	int		b;
+	int		a;
+} rgb_color;
+
+typedef struct {
+	hsv_color();
+	~hsv_color();
+	static hsv_color *new_local();
+
+	int		h;
+	int		s;
+	int		v;
+	int		a;
+} hsv_color;
+
+class LM_ColorOps @ ColorOps {
+public:
+	static rgb_color RgbColor(int r, int g, int b, int a = 255);
+	static hsv_color HsvColor(int h, int s, int v, int a = 255);
+	static rgb_color InvertColor(int r, int g, int b, int a = 255);
+
+	static hsv_color Rgb2Hsv(const rgb_color &col);
+	static rgb_color Hsv2Rgb(const hsv_color &col);
+
+	static rgb_color BlendColors(real percent, rgb_color color1, rgb_color color2);
+
+	static bool SameColor( const rgb_color& lColor, const rgb_color& rColor);
+
+	// some basic color constants
+	static const rgb_color		Black;
+	static const rgb_color		White;
+	static const rgb_color		Red;
+	static const rgb_color		Green;
+	static const rgb_color		Blue;
+	static const rgb_color		Cyan;
+	static const rgb_color		Magenta;
+	static const rgb_color		Yellow;
+	static const rgb_color		Clear;
+};
+
+#define LM_X_AXIS @ X_AXIS
+#define LM_Y_AXIS @ Y_AXIS
+#define LM_Z_AXIS @ Z_AXIS
+#define LM_NEGX_AXIS @ NEGX_AXIS
+#define LM_NEGY_AXIS @ NEGY_AXIS
+#define LM_NEGZ_AXIS @ NEGZ_AXIS
+#define LM_FREE_AXIS @ FREE_AXIS
+
+class LM_String @ String {
+	LM_String();
+	LM_String(const LM_String &str);
+	LM_String(const char *str);
+	~LM_String();
+	static LM_String *new_local();
+
+	char *Buffer() const;
+	void Set(const char *str);
+};
+
+class LM_Point @ Point {
+	LM_Point();
+	~LM_Point();
+	static LM_Point *new_local();
+
+	void Set(int32 xVal, int32 yVal);
+	void Set(const LM_Point &p2);
+
+	LM_Point operator+(const LM_Point &p2) const;
+	LM_Point operator-(const LM_Point &p2) const;
+
+	int32	x;
+	int32	y;
+};
+
+class LM_Rect @ Rect {
+	LM_Rect();
+	~LM_Rect();
+	static LM_Rect *new_local();
+
+	void Set(int32 l, int32 t, int32 r, int32 b);
+	void Normalize();
+	bool Contains(const LM_Point &pt);
+
+	int32	left;
+	int32	top;
+	int32	right;
+	int32	bottom;
+};
+
+class LM_Vector2 @ Vector2 {
+	LM_Vector2();
+	~LM_Vector2();
+	static LM_Vector2 *new_local();
+
+	void Set(real vx, real vy);
+	void Set(const LM_Vector2 &vec2);
+
+	real Dot(const LM_Vector2 &vec2);
+	LM_Vector3 Cross(const LM_Vector2 &vec2);
+
+	real Mag();
+	real SquaredMag();
+
+	LM_Vector2 Norm();
+	void NormMe();
+
+	LM_Vector2 GetOrthogonal();
+	void Rotate(real angle);
+
+	LM_Vector2 operator+(const LM_Vector2 &vec2);
+	LM_Vector2 operator-(const LM_Vector2 &vec2);
+	LM_Vector2 operator*(real f);
+	LM_Vector2 operator/(real f);
+
+	real	x;
+	real	y;
+};
+
+class LM_Vector3 @ Vector3 {
+	LM_Vector3();
+	~LM_Vector3();
+	static LM_Vector3 *new_local();
+
+	void Set(real vx, real vy, real vz);
+	void Set(const LM_Vector3 &vec2);
+
+	real Dot(const LM_Vector3 &vec2);
+	LM_Vector3 Cross(const LM_Vector3 &vec2);
+
+	real Mag();
+	real SquaredMag();
+
+	LM_Vector3 Norm();
+	void NormMe();
+
+	void GetOrthogonals(LM_Vector3 *vecU, LM_Vector3 *vecV);
+	void Rotate(int32 axis, real angle);
+
+	LM_Vector3 operator+(const LM_Vector3 &vec2);
+	LM_Vector3 operator-(const LM_Vector3 &vec2);
+	LM_Vector3 operator*(real f);
+	LM_Vector3 operator/(real f);
+
+	real	x;
+	real	y;
+	real	z;
+};
+
+class LM_BBox @ BBox {
+	LM_BBox();
+	~LM_BBox();
+	static LM_BBox *new_local();
+
+	bool IsEmpty();
+	void Clear();
+
+	void AccumulatePoint(const LM_Vector3 &v);
+	void AccumulatePoint(const LM_Vector2 &v);
+	void AccumulateBBox(const LM_BBox &box);
+	
+	void Normalize();
+	
+	bool Contains(const LM_Vector3 &v);
+	bool Contains(const LM_Vector2 &v);
+	bool Contains(const LM_BBox& box);
+	bool Intersects(const LM_BBox& box);
+
+	real MaxDimension();
+	real MinDimension();
+	real MaxDimension2D();
+	real MinDimension2D();
+
+	LM_Vector3 Center();
+	LM_Vector2 Center2D();
+
+	LM_Vector3	fMin;
+	LM_Vector3	fMax;
+};
+
+class LM_Matrix @ Matrix {
+	LM_Matrix();
+	~LM_Matrix();
+	static LM_Matrix *new_local();
+
+	void Set(const LM_Matrix &m2);
+
+	real ScaleValue();
+	
+	void Multiply(const LM_Matrix &m2);
+
+	void Transform(LM_Vector2 &pt);
+	void Transform(LM_BBox &box);
+	void TransformHomo @ Transform(LM_Vector3 &pt);
+
+	void Invert();
+	void Identity();
+	void Translate(real dx, real dy, real dz);
+	void Scale(real sx, real sy, real sz);
+	void Rotate(int32 axis, real angle);
+	void Perspective(real alpha, real nearr, real farr, real aspect);
+	
+	LM_Vector3 GetTranslation();
+	LM_Vector3 GetScale();
+	real GetZRotation();
+};
+
+class LM_ColorVector @ ColorVector {
+	LM_ColorVector();
+	~LM_ColorVector();
+	static LM_ColorVector *new_local();
+
+	void Set(real cr, real cg, real cb);
+	void Set(real cr, real cg, real cb, real ca);
+	void Set(rgb_color col);
+	void Set(const LM_ColorVector &col);
+	real Mag();
+	real SquaredMag();
+	void Normalize();
+	void Invert();
+	bool IsBlack();
+	bool IsWhite();
+	bool IsOpaque();
+	bool IsTransparent();
+	rgb_color AsColorStruct() const;
+
+	LM_ColorVector operator+(const LM_ColorVector &col2);
+	LM_ColorVector operator-(const LM_ColorVector &col2);
+	LM_ColorVector operator*(const LM_ColorVector &col2);
+	LM_ColorVector operator*(real f);
+	LM_ColorVector operator/(real f);
+
+	real	r;
+	real	g;
+	real	b;
+	real	a;
+};
+
+class LM_Stopwatch @ Stopwatch {
+	LM_Stopwatch();
+	~LM_Stopwatch();
+	static LM_Stopwatch *new_local();
+	
+	bool IsRunning();
+	void Start();
+	void Stop();
+	void Pause();
+	void Resume();
+	real ElapsedTime();
+};
+
+class LM_Math @ Math {
+	// interpolation functions
+	static real Slerp(real percent, real min, real max);
+	static real Cerp(real percent, real min, real max, const LM_Vector2 &norm1, const LM_Vector2 &norm2);
+	static real SplineInterp(real xVal, const LM_Vector2 &min, const LM_Vector2 &inA, const LM_Vector2 &inB, const LM_Vector2 &max);
+	static real SplineInterp2(real xVal, const LM_Vector2 &preVal, const LM_Vector2 &min, const LM_Vector2 &max, const LM_Vector2 &postVal);
+	static real SplineInterp3(real xVal, const LM_Vector2 &preVal, const LM_Vector2 &min, const LM_Vector2 &max, const LM_Vector2 &postVal);
+	static real SplineInterp4(real xVal, const LM_Vector2 &preVal, const LM_Vector2 &min, const LM_Vector2 &max, const LM_Vector2 &postVal);
+
+	// noise functions
+	static real Noise(LM_Vector3 pos, real amp, real freq);
+	static real Turbulence(const LM_Vector3 &pos, real amp, real scale);
+
+	// 3D noise functions
+	static LM_Vector3 NoiseVector(LM_Vector3 pos, real amp, real freq);
+	static LM_Vector3 TurbulenceVector(LM_Vector3 pos, real amp, real scale);
+
+	// 2D noise functions
+	static LM_Vector2 NoiseVector2D(const LM_Vector2 &pos, real amp, real freq, int32 randSeed);
+	static LM_Vector2 TurbulenceVector2D(const LM_Vector2 &pos, real amp, real scale, int32 randSeed);
+
+	// miscellaneous functions
+	static bool RealEqual(real r1, real r2, real threshold = 0.000001);
+	static bool RealEqual64(double r1, double r2, double threshhold = 0.000001);
+	static int32 AngleSign(real angle); // returns 1 or -1, taking into account angles over 180 or under -180
+	static bool AnglesEquivalent(real a1, real a2, real threshold = 0.000001);
+	static real NormalizeAngle(real a); // Returns an equivalent angle in the range 0 to 2PI
+	static int32 Mod(int32 x, int32 n); // Modulo operation that works for both positive and negative numbers
+};
+
+extern void LM_Beep @ Beep();
+extern void LM_Snooze @ Snooze(int32 msec);
+extern int32 LM_Round @ Round(real f);
+extern real LM_Clamp @ Clamp(real f, real min, real max);
+extern real LM_Lerp @ Lerp(real f, real min, real max);
+extern real LM_Slerp @ Slerp(real f, real min, real max);
+
+extern bool LM_CreateDir @ CreateDir(const char *path);
+
+} // end LM module

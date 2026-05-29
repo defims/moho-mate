@@ -1,0 +1,399 @@
+$#include "lm_pkg_anime.h"
+/* tolua -o pkg_moho.cpp -H pkg_moho.h pkg_moho.lua_pkg */
+
+/*
+	This file is used to auto-generate Lua interfaces.
+	If you make a change to this file, you must run the tolua command like so:
+	In Terminal, go to the 'scripting' folder and type the following command:
+	> python _make_pkg.py
+*/
+
+typedef int				int32;
+typedef unsigned int	uint32;
+typedef float			real;
+
+module MOHO { // begin module
+
+/**********************************************************************/
+/*** Moho View ***/
+
+class XGraphics : public LM_Graphics_OpenGL_Fixed
+{
+};
+
+class MohoView : public LM_View {
+	void RefreshView();
+	void DrawMe();
+
+	int32 QualityFlags();
+	void SetQualityFlags(int32 qualityFlags);
+	void SetTracingImage(const char *path);
+	bool IsTracingEnabled();
+	void TurnTracingOn(bool b);
+	bool IsTracingOn();
+	bool IsStereoEnabled();
+	void TurnStereoOn(bool b);
+	bool IsStereoOn();
+
+	int32 PickPoint(LM_Point where, int32 pickWidth = 3);
+	void PickEdge(LM_Point where, int32 *curveID, int32 *segID, int32 pickWidth = 3);
+	LM_Point PickEdgeAlongLine(LM_Point lineEnd1, LM_Point lineEnd2, int32 *curveID, int32 *segID, int32 skipMinSegID, int32 skipMaxSegID);
+	LM_Point PickEdgeAlongCurve(LM_Point cpt1, LM_Point cpt2, LM_Point cpt3, LM_Point cpt4, int32 *curveID, int32 *segID, int32 skipMinSegID, int32 skipMaxSegID, bool skipBeginning, bool skipEnd);
+	MohoLayer *PickGlobalEdge(LM_Point where, int32 *curveID, int32 *segID, int32 pickWidth = 3);
+	int32 PickShape(LM_Point where, int32 noHigherThan = -1, int32 pickWidth = 3);
+	int32 PickBone(LM_Point where, LM_Vector2 clickVec, MohoLayer *layer, bool exact, int32 pickWidth = 3, int32 ignoreBone = -1);
+	bool FloodSelect(LM_Point where, int32 tolerance, bool skipImageEdges = true, int32 curveEndExtensionDistance = 20, bool useShapeStrokes = false, int32 expansionOnStrokes = 0);
+	M_Shape *PickGlobalShape(LM_Point where, int32 noHigherThan = -1, int32 pickWidth = 3);
+	int32 PickFace(LM_Point where, int32 pickWidth = 3);
+	MohoLayer *PickGlobalLayer(LM_Point where, int32 pickWidth = 3, MohoLayer *ignoreLayer = NULL);
+	rgb_color SampleColor(LM_Point where);
+
+	LM_Vector2 Point2Vec(LM_Point where, LM_Matrix *layerM = NULL);
+
+	XGraphics *Graphics();
+	bool GPUMode();
+	void ResetView(int32 mode = 2); // 0: zoom in on all the points in the layer, 1: zoom in on all the selected points in the layer, 2: zoom out to default view
+
+	// These may seem weird, but the purpose is to get exactly the same behavior as the right-drag versions
+	void PanDown(LM_Point where);
+	void PanMoved(LM_Point where);
+	void PanUp(LM_Point where);
+
+	void ZoomDown(LM_Point where);
+	void ZoomMoved(LM_Point where);
+	void ZoomUp(LM_Point where);
+
+	void RotateDown(LM_Point where);
+	void RotateMoved(LM_Point where);
+	void RotateUp(LM_Point where);
+
+	void OrbitDown(LM_Point where);
+	void OrbitMoved(LM_Point where);
+	void OrbitUp(LM_Point where);
+
+	void DrawPreviewShape(bool fill = true, bool outline = true);
+};
+
+/**********************************************************************/
+/*** Miscellaneous Support Stuff ***/
+
+#define MSG_SCRIPT_BASE @ MSG_BASE
+
+class MouseEvent {
+	MohoView	*view;
+
+	LM_Point	pt;
+	LM_Point	startPt;
+	LM_Vector2	vec;
+	LM_Vector2	drawingVec;
+	LM_Vector2	startVec;
+	LM_Vector2	drawingStartVec;
+	uint32		mouseBut;
+	bool		shiftKey;
+	bool		ctrlKey;
+	bool		altKey;
+	real		penPressure;
+	bool		doubleClick;
+	bool		isPenEvent;
+	bool		eraser;
+};
+
+class KeyEvent {
+	MohoView	*view;
+
+	char		*key;
+	int32		keyCode;
+	bool		shiftKey;
+	bool		ctrlKey;
+	bool		altKey;
+};
+
+class InputDeviceEvent {
+	MohoView	*view;
+	
+	LM_Message	*inputData;
+	bool		shiftKey;
+	bool		ctrlKey;
+	bool		altKey;
+};
+
+/**********************************************************************/
+/*** Font Preview View ***/
+
+class LM_FontPreview : public LM_View {
+	void SetPreviewText(const char *text);
+	void SetFontName(const char *font);
+	void Refresh();
+};
+
+extern LM_FontPreview *WF_FontPreview @ FontPreview(int32 width, int32 height);
+
+/**********************************************************************/
+/*** Mesh Preview View ***/
+
+class LM_MeshPreview : public LM_View {
+	M_Mesh *Mesh();
+	bool CreateShape(bool filled);
+	void AutoZoom();
+	void Refresh();
+};
+
+extern LM_MeshPreview *WF_MeshPreview @ MeshPreview(int32 width, int32 height);
+
+/**********************************************************************/
+/*** Moho Script Interface ***/
+
+extern void RedrawMoho @ Redraw();
+extern void NewKeyframe(int32 channel);
+extern const char *Localize(const char *str);
+extern const char *BindingKeyName();
+extern bool IsMohoPro();
+
+enum AlignmentMessage
+{
+	ALIGN_LEFT,
+	ALIGN_RIGHT,
+	ALIGN_HCENTER,
+	ALIGN_TOP,
+	ALIGN_BOTTOM,
+	ALIGN_VCENTER
+};
+
+enum LayersWindowSearchContext
+{
+	LAYERWND_SEARCHCONTEXT_ALL,
+	LAYERWND_SEARCHCONTEXT_NAMECONTAINS,
+	LAYERWND_SEARCHCONTEXT_GROUPNAMECONTAINS,
+	LAYERWND_SEARCHCONTEXT_COMPCONTAINS,
+	LAYERWND_SEARCHCONTEXT_KINDCONTAINS,
+	LAYERWND_SEARCHCONTEXT_LABELIS,
+	LAYERWND_SEARCHCONTEXT_VISIBILITYIS,
+	LAYERWND_SEARCHCONTEXT_TIMELINEVISIBILITYIS,
+	LAYERWND_SEARCHCONTEXT_TAGSCONTAIN,
+	LAYERWND_SEARCHCONTEXT_COMMENTSCONTAIN
+};
+
+enum LayersWindowSearchContextLabelColor
+{
+	LAYERWND_SEARCHCONTEXT_LABEL_GRAY,
+	LAYERWND_SEARCHCONTEXT_LABEL_RED,
+	LAYERWND_SEARCHCONTEXT_LABEL_ORANGE,
+	LAYERWND_SEARCHCONTEXT_LABEL_YELLOW,
+	LAYERWND_SEARCHCONTEXT_LABEL_GREEN,
+	LAYERWND_SEARCHCONTEXT_LABEL_BLUE,
+	LAYERWND_SEARCHCONTEXT_LABEL_PURPLE,
+	LAYERWND_SEARCHCONTEXT_LABEL_TAN,
+	LAYERWND_SEARCHCONTEXT_LABEL_PINK,
+	LAYERWND_SEARCHCONTEXT_LABEL_TURQUOISE,
+	LAYERWND_SEARCHCONTEXT_LABEL_CADETBLUE,
+	LAYERWND_SEARCHCONTEXT_LABEL_CORAL
+};
+
+enum LayersWindowSearchContextVisibility
+{
+	LAYERWND_SEARCHCONTEXT_VIS_ISVISIBLE,
+	LAYERWND_SEARCHCONTEXT_VIS_ISNOTVISIBLE,
+	LAYERWND_SEARCHCONTEXT_VIS_ISORISNOTVISIBILE
+};
+
+
+class ScriptInterface {
+	int32		fFrame @ frame;
+	int32		fDrawingFrame @ drawingFrame;
+	int32		fLayerFrame @ layerFrame;
+	int32		fDrawingLayerFrame @ drawingLayerFrame;
+	MohoDoc		*fDoc @ document;
+	MohoLayer	*fLayer @ layer;
+	MohoLayer	*fDrawingLayer @ drawingLayer;
+	MohoView	*fView @ view;
+	bool		fGridOn @ gridOn;
+	real		fGridSize @ gridSize;
+
+	const char *AppVersion();
+	bool IsPro();
+
+	void Quit();
+	void Click();
+
+	void SetCurFrame(int32 frame, bool updateUI = true, bool enableBoneDynamics = false);
+	void UpdateUI();
+	bool IsPlaying();
+
+	bool IsCopyable();
+	void Copy(M_Mesh *mesh = NULL);
+	void CopyAlternate(M_Mesh *mesh = NULL);
+	bool IsPasteable();
+	void Paste();
+	void PasteAlternate();
+	void CopyText(const char *text);
+	void CopyColor(rgb_color color);
+	const char *ClipboardText();
+
+	bool CheckIfLocked(MohoLayer *layer, bool showAlert);
+	
+	void NewKeyframe(int32 channel);
+	void UpdateSelectedChannels();
+
+	bool DisableDrawingTools();
+	const char *CurrentTool();
+
+	void SetSelLayer(MohoLayer *layer, bool multiSelect = false, bool allowDeselect = true);
+	void AlignLayers(AlignmentMessage alignMessage);
+	void ShowLayerInLayersPalette(MohoLayer *layer);
+	MohoLayer *CreateNewLayer(int32 layerType, bool undoable = true);
+	MohoLayer *DuplicateLayer(MohoLayer *layer, bool byReference = false);
+	void DeleteLayer(MohoLayer *layer);
+	void DeleteMultipleLayers();
+	void PlaceLayerInGroup(MohoLayer *child, MohoLayer *group, bool top = true, bool isUndoable = true);
+	void PlaceLayerBehindAnother(MohoLayer *moveLayer, MohoLayer *behindThis);
+	MeshLayer *LayerAsVector(MohoLayer *layer);
+	ImageLayer *LayerAsImage(MohoLayer *layer);
+	GroupLayer *LayerAsGroup(MohoLayer *layer);
+	BoneLayer *LayerAsBone(MohoLayer *layer);
+	SwitchLayer *LayerAsSwitch(MohoLayer *layer);
+	ParticleLayer *LayerAsParticle(MohoLayer *layer);
+	Mesh3DLayer *LayerAs3D(MohoLayer *layer);
+	AudioLayer *LayerAsAudio(MohoLayer *layer);
+	NoteLayer *LayerAsNote(MohoLayer *layer);
+
+	AnimBool *ChannelAsAnimBool(AnimChannel *ch);
+	AnimColor *ChannelAsAnimColor(AnimChannel *ch);
+	AnimString *ChannelAsAnimString(AnimChannel *ch);
+	AnimVal *ChannelAsAnimVal(AnimChannel *ch);
+	AnimVec2 *ChannelAsAnimVec2(AnimChannel *ch);
+	AnimVec3 *ChannelAsAnimVec3(AnimChannel *ch);
+
+	void EditLayerSettings();
+	
+	M_Mesh *Mesh();
+	M_Mesh *DrawingMesh();
+	M_Shape *SelectedShape(); // returns the first selected shape, but starting in version 10 there may be multiple selected shapes
+	void DeselectShapes();
+	M_Shape *NewShapeProperties();
+	M_Style *CurrentEditStyle();
+	void SnapToGrid(LM_Vector2 &v);
+	void AddPointKeyframe(int32 frame, MohoLayer *layer = NULL, bool allSelectedKeys = false);
+	int32 CreateShape(bool filled, bool behindNeighborStrokes = false, int32 frame = -1000000, bool checkForBadShapes = true, bool skipDuplicateStrokes = false, bool skipFill = false, bool skipLine = false);
+	int32 TraceWhitePixels(int32 frame, int32 gapFilling = 0);
+	bool RestoreTracingImage();
+	void SaveTracingImage();
+	void PurgeTracingImage();
+	void DrawShape(LM_Graphics *g, M_Mesh *mesh, int32 shapeID);
+	rgb_color NewShapeFillColor();
+	rgb_color NewShapeLineColor();
+	real NewShapeLineWidth();
+	void SetNewShapeLineWidth(real width);
+		// The following method is deprecated, but remains for older scripts.
+		// Use the new void InsertText(int32 lineOffset, InsertTextParams *textParams) method instead
+	void InsertText(const char *text, const char *font, bool fill, bool stroke, bool groupTogether, bool centerH, int32 lineOffset);
+	void InsertText(InsertTextParams *textParams, int32 lineOffset);
+	void PickStyleProperties(M_Shape *fromShape, bool skipFill = false, bool skipLine = false);
+	void PushStyleProperties(M_Shape *toShape, bool skipFill = false, bool skipLine = false);
+
+	M_Skeleton *Skeleton();
+	M_Skeleton *ParentSkeleton();
+	void UpdateBonePointSelection();
+
+	M_Mesh3D *Mesh3D();
+
+	bool HasMaximumWarpLayers();
+	bool HasMaximumSmartBones();
+
+	int32 CountAudioLayers();
+	AudioLayer *GetAudioLayer(int32 id);
+
+	// coordinate conversions
+	real PixelToDoc(real pixel);
+	real DocToPixel(real doc);
+
+	int32 CountPoints();
+	int32 CountSelectedPoints(bool updateCount = false);
+	int32 CountCurves();
+	int32 CountSelectedCurves(bool updateCount = false);
+	int32 CountEdges();
+	int32 CountSelectedEdges(bool updateCount = false);
+	int32 CountShapes();
+	int32 CountSelectedShapes(bool updateCount = false);
+	int32 CountFilledShapes();
+	int32 CountSelectedFilledShapes();
+
+	int32 CountBones();
+	int32 CountSelectedBones(bool updateCount = false);
+
+	void CreateTextObject();
+	void FillInFontList(LM_TextList *list);
+
+	LM_Vector3 NoiseVector(LM_Vector3 &pos, real amp, real freq);
+	bool AnglesEquivalent(real a1, real a2, real threshold = 1e-6f);
+
+	void ImportEPS(const char *path);
+
+	const char *AppDir(bool variantDir);
+	const char *UserAppDir();
+	const char *ExporterPath();
+	const char *UserPrefsDir();
+	const char *UserPrefsFile();
+	const char *UserContentDir();
+
+	void BeginFileListing(const char *dir, bool listHiddenAndSystemFiles = true);
+	const char *GetNextFile();
+
+	MohoDoc *LoadDocument(const char *path);
+	void DestroyDocument(MohoDoc *doc);
+	
+	void OpenPoserPalette();
+	
+	void FileNew();
+	void FileOpen(const char *path);
+	void FileClose();
+	void FileSave();
+	void FileSaveAs(const char *path);
+	void FileImport(const char *path, int32 mode = 0); // mode (only applies to Anime files): 0=import as copy, 1=import as reference, 2=ask the user
+	void FileRender(const char *path); // path should end in .bmp, .jpg, .png, or .tga
+
+	void PresentFile(const char *path); // Open file in the default app, or display it in the Finder/Explorer, etc.
+
+	LayersWindowSearchContext LayersWindowGetSearchContext();
+	void LayersWindowSetSearchContext(LayersWindowSearchContext context);
+	const char* LayersWindowGetSearchContextValue();
+	void LayersWindowSetSearchContextValue(const char *val);
+};
+
+/*
+	The ScriptInterfaceHelper class is a bit special.
+	It allows you to access sensitive resources that must be released when you're done with them.
+	Unlike most objects, it must be explicitly deleted when you're done using it, like so:
+
+	local helper = MOHO.ScriptInterfaceHelper:new_local()
+	local moho = helper:MohoObject()
+	print(moho:CountPoints())
+	helper:delete()
+*/
+
+class ScriptInterfaceHelper {
+public:
+	ScriptInterfaceHelper();
+	~ScriptInterfaceHelper();
+	static ScriptInterfaceHelper *new_local();
+
+	ScriptInterface *MohoObject();
+};
+
+/**********************************************************************/
+/*** Script Preference Interface ***/
+
+class ScriptPrefs {
+	void SetBool(const char *key, bool value);
+	bool GetBool(const char *key, bool defaultValue);
+
+	void SetInt(const char *key, int32 value);
+	int32 GetInt(const char *key, int32 defaultValue);
+
+	void SetFloat(const char *key, real value);
+	real GetFloat(const char *key, real defaultValue);
+
+	void SetString(const char *key, const char *value);
+	const char *GetString(const char *key, const char *defaultValue);
+};
+
+} // end MOHO module

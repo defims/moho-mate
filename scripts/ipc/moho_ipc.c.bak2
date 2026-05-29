@@ -1,0 +1,855 @@
+/*
+ * moho_ipc.c - Moho IPC with CFSocket + ScriptInterfaceHelper + FFmpeg
+ *
+ * 原理：
+ * 1. CFSocket 收到命令后调用 Lua 的 ipc_execute()
+ * 2. ipc_execute() 内部使用 MOHO.ScriptInterfaceHelper 获取 moho
+ * 3. 官方推荐的"敏感资源"管理方式，稳定不崩溃
+ * 4. FFmpeg 视频编码：PNG 序列 → MP4/MOV/GIF
+ *
+ * 用法：
+ * local ipc = require("moho_ipc")
+ * ipc.start()  -- 启动 IPC 服务
+ * ipc.encode_video("/tmp/frame_%05d.png", "/tmp/video.mp4", 24)
+ *
+ * 发送命令：
+ * nc -U /tmp/moho_ipc.sock <<< 'print("hello")'
+ * moho-mate ipc send 'ping()'
+ */
+
+#include <lua.h>
+#include <lauxlib.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdatomic.h>
+
+// FFmpeg headers
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
+#include <libswscale/swscale.h>
+
+#define SOCKET_PATH "/tmp/moho_ipc.sock"
+#define CMD_SIZE 8192
+#define RESP_SIZE 16384  // 响应缓冲区大小
+
+// ===== 异步编码状态 =====
+typedef struct {
+    char input_path[512];
+    char output_path[512];
+    int fps;
+    int crf;
+    _Atomic int status;  // 0=idle, 1=running, 2=success, 3=error
+    _Atomic int progress;  // 0-100
+    char error_msg[256];
+    int total_frames;
+    int encoded_frames;
+} EncodeState;
+
+static EncodeState g_encode_state = {0};
+static char g_response[RESP_SIZE];  // 存储响应
+static lua_State *g_L = NULL;  // Lua state for callbacks
+static CFSocketRef g_listen_socket = NULL;
+static CFSocketRef g_client_socket = NULL;
+static CFRunLoopSourceRef g_listen_source = NULL;
+static CFRunLoopSourceRef g_client_source = NULL;
+static int g_call_count = 0;
+static int g_error_count = 0;
+
+// 日志
+static void log_msg(const char *fmt, ...) {
+    FILE *f = fopen("/tmp/moho_ipc.log", "a");
+    if (f) {
+        fprintf(f, "[ipc] ");
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(f, fmt, args);
+        va_end(args);
+        fclose(f);
+    }
+}
+
+// 执行命令（通过 Lua 的 ipc_execute，内部使用 ScriptInterfaceHelper）
+// 返回响应字符串（存储在 g_response）
+static const char* execute_via_helper(const char *cmd) {
+    if (g_L == NULL) {
+        log_msg("✗ g_L is NULL\n");
+        return "error|g_L is NULL";
+    }
+
+    // 获取 ipc_execute 函数
+    lua_getglobal(g_L, "ipc_execute");
+    if (!lua_isfunction(g_L, -1)) {
+        log_msg("✗ ipc_execute not found\n");
+        lua_pop(g_L, 1);
+        return "error|ipc_execute not found";
+    }
+
+    // 推入命令参数
+    lua_pushstring(g_L, cmd);
+
+    g_call_count++;
+    int ret = lua_pcall(g_L, 1, 1, 0);
+
+    if (ret != 0) {
+        log_msg("✗ lua_pcall failed (ret=%d): %s\n", ret, lua_tostring(g_L, -1));
+        lua_pop(g_L, 1);
+        g_error_count++;
+        return "error|lua_pcall failed";
+    }
+
+    // 获取返回值并存储到 g_response
+    const char *result = lua_tostring(g_L, -1);
+    if (result) {
+        strncpy(g_response, result, RESP_SIZE - 1);
+        g_response[RESP_SIZE - 1] = 0;
+    } else {
+        strcpy(g_response, "ok|(nil)");
+    }
+    lua_pop(g_L, 1);
+
+    log_msg("ipc_execute returned: %.100s (calls=%d, errors=%d)\n",
+            g_response, g_call_count, g_error_count);
+
+    return g_response;
+}
+
+// 客户端 socket 回调
+static void client_callback(CFSocketRef s, CFSocketCallBackType type,
+                            CFDataRef addr, const void *data, void *info) {
+    if (type != kCFSocketReadCallBack) return;
+
+    int fd = CFSocketGetNative(s);
+    char buf[CMD_SIZE];
+    ssize_t n = read(fd, buf, CMD_SIZE - 1);
+
+    if (n > 0) {
+        buf[n] = 0;
+        log_msg("收到命令 (%zd bytes): %.60s...\n", n, buf);
+
+        // 通过 ipc_execute 执行（内部使用 ScriptInterfaceHelper）
+        const char *response = execute_via_helper(buf);
+
+        // 发送完整响应
+        int resp_len = strlen(response);
+        write(fd, response, resp_len);
+        write(fd, "\n", 1);
+    } else if (n == 0 || (n < 0 && errno != EAGAIN)) {
+        log_msg("客户端断开\n");
+        if (g_client_socket) {
+            CFSocketInvalidate(g_client_socket);
+            CFRelease(g_client_socket);
+            g_client_socket = NULL;
+        }
+        if (g_client_source) {
+            CFRelease(g_client_source);
+            g_client_source = NULL;
+        }
+    }
+}
+
+// 监听 socket 回调
+static void listen_callback(CFSocketRef s, CFSocketCallBackType type,
+                            CFDataRef addr, const void *data, void *info) {
+    if (type != kCFSocketAcceptCallBack) return;
+
+    int client_fd = *(int *)data;
+    log_msg("新连接: fd=%d\n", client_fd);
+
+    // 关闭旧连接
+    if (g_client_socket) {
+        CFSocketInvalidate(g_client_socket);
+        CFRelease(g_client_socket);
+        g_client_socket = NULL;
+    }
+    if (g_client_source) {
+        CFRelease(g_client_source);
+        g_client_source = NULL;
+    }
+
+    // 设置非阻塞
+    int flags = fcntl(client_fd, F_GETFL, 0);
+    fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+
+    // 创建客户端 CFSocket
+    CFSocketContext ctx = {0, NULL, NULL, NULL, NULL};
+    g_client_socket = CFSocketCreateWithNative(
+        kCFAllocatorDefault, client_fd,
+        kCFSocketReadCallBack, client_callback, &ctx
+    );
+
+    if (!g_client_socket) {
+        log_msg("✗ 创建客户端 CFSocket 失败\n");
+        close(client_fd);
+        return;
+    }
+
+    // 添加到 RunLoop
+    g_client_source = CFSocketCreateRunLoopSource(
+        kCFAllocatorDefault, g_client_socket, 0
+    );
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), g_client_source, kCFRunLoopDefaultMode);
+
+    log_msg("✓ 客户端已注册到 RunLoop\n");
+}
+
+// Lua API: start()
+static int l_start(lua_State *L) {
+    log_msg("=== IPC start ===\n");
+
+    // 保存 lua_State
+    g_L = L;
+
+    if (g_listen_socket) {
+        lua_pushboolean(L, 1);
+        lua_pushstring(L, "already running");
+        return 2;
+    }
+
+    unlink(SOCKET_PATH);
+
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "socket() failed");
+        return 2;
+    }
+
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "bind() failed");
+        return 2;
+    }
+
+    if (listen(sock, 5) < 0) {
+        close(sock);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "listen() failed");
+        return 2;
+    }
+
+    // 创建 CFSocket
+    CFSocketContext ctx = {0, NULL, NULL, NULL, NULL};
+    g_listen_socket = CFSocketCreateWithNative(
+        kCFAllocatorDefault, sock,
+        kCFSocketAcceptCallBack, listen_callback, &ctx
+    );
+
+    if (!g_listen_socket) {
+        close(sock);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "CFSocketCreateWithNative failed");
+        return 2;
+    }
+
+    // 添加到 RunLoop
+    g_listen_source = CFSocketCreateRunLoopSource(
+        kCFAllocatorDefault, g_listen_socket, 0
+    );
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), g_listen_source, kCFRunLoopDefaultMode);
+
+    log_msg("✓ IPC 服务启动: %s (fd=%d)\n", SOCKET_PATH, sock);
+    log_msg("✓ RunLoop: %p (主=%p)\n", CFRunLoopGetCurrent(), CFRunLoopGetMain());
+
+    lua_pushboolean(L, 1);
+    lua_pushstring(L, SOCKET_PATH);
+    return 2;
+}
+
+// Lua API: stop()
+static int l_stop(lua_State *L) {
+    log_msg("=== IPC stop ===\n");
+
+    if (g_client_socket) {
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), g_client_source, kCFRunLoopDefaultMode);
+        CFSocketInvalidate(g_client_socket);
+        CFRelease(g_client_socket);
+        g_client_socket = NULL;
+        CFRelease(g_client_source);
+        g_client_source = NULL;
+    }
+
+    if (g_listen_socket) {
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), g_listen_source, kCFRunLoopDefaultMode);
+        CFSocketInvalidate(g_listen_socket);
+        CFRelease(g_listen_socket);
+        g_listen_socket = NULL;
+        CFRelease(g_listen_source);
+        g_listen_source = NULL;
+    }
+
+    g_L = NULL;
+    unlink(SOCKET_PATH);
+    log_msg("✓ IPC 服务停止\n");
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Lua API: status()
+static int l_status(lua_State *L) {
+    lua_pushboolean(L, g_listen_socket ? 1 : 0);
+    lua_pushstring(L, SOCKET_PATH);
+    lua_pushboolean(L, g_client_socket ? 1 : 0);
+    lua_pushinteger(L, g_call_count);
+    lua_pushinteger(L, g_error_count);
+    return 5;
+}
+
+// Lua API: check() - 兼容 LayerScript 版 API（返回 nil）
+static int l_check(lua_State *L) {
+    lua_pushnil(L);
+    return 1;
+}
+
+// Lua API: poll() - 兼容旧 API
+static int l_poll(lua_State *L) {
+    lua_pushinteger(L, 0);
+    return 1;
+}
+
+// ===== FFmpeg 视频编码 =====
+
+/*
+ * encode_video(input_pattern, output_path, fps, crf, codec)
+ * 
+ * 参数：
+ *   input_pattern: PNG 序列路径，如 "/tmp/frame_%05d.png"
+ *   output_path:   输出视频路径，如 "/tmp/video.mp4"
+ *   fps:           帧率（默认 24）
+ *   crf:           质量 0-51，越小越好（默认 23）
+ *   codec:         编码器（默认 "mpeg4"）
+ *
+ * 返回：
+ *   success, error_message
+ */
+
+// 内部编码实现（同步）
+static int encode_video_impl(const char *input_pattern, const char *output_path, int fps, int crf, const char *codec_name) {
+
+    log_msg("=== encode_video ===\n");
+    log_msg("  input: %s\n", input_pattern);
+    log_msg("  output: %s\n", output_path);
+    log_msg("  fps: %d, crf: %d, codec: %s\n", fps, crf, codec_name);
+
+    AVFormatContext *output_fmt_ctx = NULL;
+    AVCodecContext *codec_ctx = NULL;
+    AVStream *stream = NULL;
+    const AVCodec *codec = NULL;
+    AVFrame *frame = NULL;
+    AVPacket *pkt = NULL;
+    struct SwsContext *sws_ctx = NULL;
+    int ret = 0;
+    char err_buf[256];
+
+    // 1. 打开输入序列
+    AVFormatContext *input_fmt_ctx = NULL;
+    const AVInputFormat *input_fmt = av_find_input_format("image2");
+    
+    AVDictionary *input_opts = NULL;
+    char fps_str[16];
+    snprintf(fps_str, sizeof(fps_str), "%d", fps);
+    av_dict_set(&input_opts, "framerate", fps_str, 0);
+    // 不设置 loop，避免无限循环
+
+    ret = avformat_open_input(&input_fmt_ctx, input_pattern, input_fmt, &input_opts);
+    av_dict_free(&input_opts);
+    if (ret < 0) {
+        av_strerror(ret, err_buf, sizeof(err_buf));
+        log_msg("✗ 无法打开输入: %s\n", err_buf);
+        lua_pushboolean(L, 0);
+        lua_pushfstring(L, "无法打开输入: %s", err_buf);
+        return 2;
+    }
+
+    ret = avformat_find_stream_info(input_fmt_ctx, NULL);
+    if (ret < 0) {
+        av_strerror(ret, err_buf, sizeof(err_buf));
+        avformat_close_input(&input_fmt_ctx);
+        log_msg("✗ 无法获取流信息: %s\n", err_buf);
+        lua_pushboolean(L, 0);
+        lua_pushfstring(L, "无法获取流信息: %s", err_buf);
+        return 2;
+    }
+
+    AVStream *input_stream = input_fmt_ctx->streams[0];
+    AVCodecParameters *input_codecpar = input_stream->codecpar;
+    int width = input_codecpar->width;
+    int height = input_codecpar->height;
+    log_msg("  输入尺寸: %dx%d\n", width, height);
+
+    // 2. 创建输出格式上下文
+    ret = avformat_alloc_output_context2(&output_fmt_ctx, NULL, NULL, output_path);
+    if (ret < 0 || !output_fmt_ctx) {
+        avformat_close_input(&input_fmt_ctx);
+        log_msg("✗ 无法创建输出上下文\n");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "无法创建输出上下文");
+        return 2;
+    }
+
+    // 3. 查找编码器（硬编码 MPEG4，Moho 内置支持）
+    codec = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    if (!codec) {
+        avformat_close_input(&input_fmt_ctx);
+        avformat_free_context(output_fmt_ctx);
+        log_msg("✗ 找不到 MPEG4 编码器\n");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "找不到 MPEG4 编码器（Moho 内置 FFmpeg 可能不支持视频编码）");
+        return 2;
+    }
+    log_msg("  编码器: %s\n", codec->name);
+
+    // 4. 创建流
+    stream = avformat_new_stream(output_fmt_ctx, NULL);
+    if (!stream) {
+        avformat_close_input(&input_fmt_ctx);
+        avformat_free_context(output_fmt_ctx);
+        log_msg("✗ 无法创建流\n");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "无法创建流");
+        return 2;
+    }
+
+    // 5. 创建编码器上下文
+    codec_ctx = avcodec_alloc_context3(codec);
+    if (!codec_ctx) {
+        avformat_close_input(&input_fmt_ctx);
+        avformat_free_context(output_fmt_ctx);
+        log_msg("✗ 无法创建编码器上下文\n");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "无法创建编码器上下文");
+        return 2;
+    }
+
+    // 6. 设置编码参数
+    codec_ctx->width = width;
+    codec_ctx->height = height;
+    codec_ctx->time_base = (AVRational){1, fps};
+    codec_ctx->framerate = (AVRational){fps, 1};
+    codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+
+    // 根据编码器设置参数
+    if (strcmp(codec_name, "libx264") == 0 || strcmp(codec_name, "libx265") == 0) {
+        // CRF 模式（仅适用于 libx264/libx265）
+        codec_ctx->bit_rate = 0;
+        char crf_str[16];
+        snprintf(crf_str, sizeof(crf_str), "%d", crf);
+        av_opt_set(codec_ctx->priv_data, "crf", crf_str, 0);
+        av_opt_set(codec_ctx->priv_data, "preset", "medium", 0);
+    } else {
+        // 其他编码器使用固定码率
+        // CRF 越小质量越好，映射到码率
+        int bitrate_kbps = (100 - crf) * 100 + 500;  // 简单映射
+        codec_ctx->bit_rate = bitrate_kbps * 1000;
+        log_msg("  使用码率: %d kbps\n", bitrate_kbps);
+    }
+
+    stream->time_base = codec_ctx->time_base;
+
+    log_msg("  尝试打开编码器: %s\n", codec_name);
+
+    // 7. 打开编码器
+    ret = avcodec_open2(codec_ctx, codec, NULL);
+    if (ret < 0) {
+        av_strerror(ret, err_buf, sizeof(err_buf));
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&input_fmt_ctx);
+        avformat_free_context(output_fmt_ctx);
+        log_msg("✗ 无法打开编码器: %s (ret=%d)\n", err_buf, ret);
+        lua_pushboolean(L, 0);
+        lua_pushfstring(L, "无法打开编码器: %s", err_buf);
+        return 2;
+    }
+    log_msg("  ✓ 编码器已打开\n");
+
+    // 8. 复制编码器参数到流
+    log_msg("  复制编码器参数到流...\n");
+    ret = avcodec_parameters_from_context(stream->codecpar, codec_ctx);
+    if (ret < 0) {
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&input_fmt_ctx);
+        avformat_free_context(output_fmt_ctx);
+        log_msg("✗ 无法复制编码器参数\n");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "无法复制编码器参数");
+        return 2;
+    }
+    log_msg("  ✓ 参数已复制\n");
+
+    // 9. 打开输出文件
+    log_msg("  打开输出文件: %s\n", output_path);
+    if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+        ret = avio_open(&output_fmt_ctx->pb, output_path, AVIO_FLAG_WRITE);
+        if (ret < 0) {
+            av_strerror(ret, err_buf, sizeof(err_buf));
+            avcodec_free_context(&codec_ctx);
+            avformat_close_input(&input_fmt_ctx);
+            avformat_free_context(output_fmt_ctx);
+            log_msg("✗ 无法打开输出文件: %s\n", err_buf);
+            lua_pushboolean(L, 0);
+            lua_pushfstring(L, "无法打开输出文件: %s", err_buf);
+            return 2;
+        }
+    }
+    log_msg("  ✓ 输出文件已打开\n");
+
+    // 10. 写文件头
+    log_msg("  写文件头...\n");
+    ret = avformat_write_header(output_fmt_ctx, NULL);
+    if (ret < 0) {
+        av_strerror(ret, err_buf, sizeof(err_buf));
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&input_fmt_ctx);
+        avio_closep(&output_fmt_ctx->pb);
+        avformat_free_context(output_fmt_ctx);
+        log_msg("✗ 无法写文件头: %s\n", err_buf);
+        lua_pushboolean(L, 0);
+        lua_pushfstring(L, "无法写文件头: %s", err_buf);
+        return 2;
+    }
+    log_msg("  ✓ 文件头已写入\n");
+
+    // 11. 创建帧和包
+    log_msg("  分配帧和包内存...\n");
+    frame = av_frame_alloc();
+    pkt = av_packet_alloc();
+    if (!frame || !pkt) {
+        log_msg("✗ 内存分配失败\n");
+        goto cleanup;
+    }
+    log_msg("  ✓ 内存已分配\n");
+
+    frame->format = AV_PIX_FMT_YUV420P;
+    frame->width = width;
+    frame->height = height;
+    log_msg("  分配帧缓冲 %dx%d...\n", width, height);
+    ret = av_frame_get_buffer(frame, 0);
+    if (ret < 0) {
+        av_strerror(ret, err_buf, sizeof(err_buf));
+        log_msg("✗ 无法分配帧缓冲: %s\n", err_buf);
+        goto cleanup;
+    }
+    log_msg("  ✓ 帧缓冲已分配\n");
+
+    // 12. 打开解码器（用于读取 PNG）
+    log_msg("  查找 PNG 解码器...\n");
+    const AVCodec *dec_codec = avcodec_find_decoder(input_codecpar->codec_id);
+    if (!dec_codec) {
+        log_msg("✗ 找不到解码器\n");
+        goto cleanup;
+    }
+    log_msg("  解码器: %s\n", dec_codec->name);
+    
+    AVCodecContext *dec_ctx = avcodec_alloc_context3(dec_codec);
+    avcodec_parameters_to_context(dec_ctx, input_codecpar);
+    log_msg("  打开解码器...\n");
+    ret = avcodec_open2(dec_ctx, dec_codec, NULL);
+    if (ret < 0) {
+        av_strerror(ret, err_buf, sizeof(err_buf));
+        log_msg("✗ 无法打开解码器: %s\n", err_buf);
+        avcodec_free_context(&dec_ctx);
+        goto cleanup;
+    }
+    log_msg("  ✓ 解码器已打开 (pix_fmt=%d)\n", dec_ctx->pix_fmt);
+
+    // 13. 初始化 SwsContext（格式转换）
+    log_msg("  创建 SwsContext...\n");
+    sws_ctx = sws_getContext(width, height, dec_ctx->pix_fmt,
+                              width, height, AV_PIX_FMT_YUV420P,
+                              SWS_BILINEAR, NULL, NULL, NULL);
+    if (!sws_ctx) {
+        log_msg("✗ 无法创建 SwsContext\n");
+        avcodec_free_context(&dec_ctx);
+        goto cleanup;
+    }
+    log_msg("  ✓ SwsContext 已创建\n");
+
+    // 14. 编码循环
+    log_msg("  开始编码循环...\n");
+    int frame_count = 0;
+    AVFrame *input_frame = av_frame_alloc();
+    AVPacket *input_pkt = av_packet_alloc();
+
+    while (av_read_frame(input_fmt_ctx, input_pkt) >= 0) {
+        log_msg("    读取帧 %d...\n", frame_count);
+        ret = avcodec_send_packet(dec_ctx, input_pkt);
+        if (ret < 0) {
+            av_strerror(ret, err_buf, sizeof(err_buf));
+            log_msg("    ✗ 发送包失败: %s\n", err_buf);
+            av_packet_unref(input_pkt);
+            continue;
+        }
+
+        while ((ret = avcodec_receive_frame(dec_ctx, input_frame)) >= 0) {
+            log_msg("    解码帧 %d (pix_fmt=%d)\n", frame_count, input_frame->format);
+            // 转换格式
+            const uint8_t *const src_data[4] = {
+                input_frame->data[0],
+                input_frame->data[1],
+                input_frame->data[2],
+                input_frame->data[3]
+            };
+            ret = sws_scale(sws_ctx, src_data, input_frame->linesize, 0, height,
+                      frame->data, frame->linesize);
+            if (ret < 0) {
+                log_msg("    ✗ sws_scale 失败: %d\n", ret);
+                continue;
+            }
+            log_msg("    sws_scale 成功\n");
+
+            frame->pts = frame_count;
+
+            // 编码
+            log_msg("    发送帧到编码器...\n");
+            ret = avcodec_send_frame(codec_ctx, frame);
+            if (ret < 0) {
+                av_strerror(ret, err_buf, sizeof(err_buf));
+                log_msg("    ✗ 编码失败: %s\n", err_buf);
+                break;
+            }
+            log_msg("    接收编码包...\n");
+
+            while ((ret = avcodec_receive_packet(codec_ctx, pkt)) >= 0) {
+                log_msg("    收到编码包 (size=%d)\n", pkt->size);
+                av_packet_rescale_ts(pkt, codec_ctx->time_base, stream->time_base);
+                pkt->stream_index = stream->index;
+                ret = av_interleaved_write_frame(output_fmt_ctx, pkt);
+                if (ret < 0) {
+                    av_strerror(ret, err_buf, sizeof(err_buf));
+                    log_msg("    ✗ 写入失败: %s\n", err_buf);
+                } else {
+                    log_msg("    ✓ 写入成功\n");
+                }
+                av_packet_unref(pkt);
+            }
+
+            frame_count++;
+        }
+
+        av_packet_unref(input_pkt);
+        av_frame_unref(input_frame);
+    }
+
+    av_frame_free(&input_frame);
+    av_packet_free(&input_pkt);
+    avcodec_free_context(&dec_ctx);
+    sws_freeContext(sws_ctx);
+    log_msg("  ✓ 清理解码器\n");
+
+    // 15. 刷新编码器
+    log_msg("  刷新编码器...\n");
+    avcodec_send_frame(codec_ctx, NULL);
+    while (avcodec_receive_packet(codec_ctx, pkt) >= 0) {
+        av_packet_rescale_ts(pkt, codec_ctx->time_base, stream->time_base);
+        pkt->stream_index = stream->index;
+        av_interleaved_write_frame(output_fmt_ctx, pkt);
+        av_packet_unref(pkt);
+    }
+    log_msg("  ✓ 编码器已刷新\n");
+
+    // 16. 写文件尾
+    log_msg("  写文件尾...\n");
+    av_write_trailer(output_fmt_ctx);
+    log_msg("  ✓ 文件尾已写入\n");
+
+    log_msg("✓ 编码完成: %d 帧\n", frame_count);
+
+    // 清理
+    av_packet_free(&pkt);
+    av_frame_free(&frame);
+    avcodec_free_context(&codec_ctx);
+    avformat_close_input(&input_fmt_ctx);
+    if (output_fmt_ctx && !(output_fmt_ctx->oformat->flags & AVFMT_NOFILE))
+        avio_closep(&output_fmt_ctx->pb);
+    avformat_free_context(output_fmt_ctx);
+
+    return 0;  // 成功
+
+cleanup:
+    if (pkt) av_packet_free(&pkt);
+    if (frame) av_frame_free(&frame);
+    if (codec_ctx) avcodec_free_context(&codec_ctx);
+    if (input_fmt_ctx) avformat_close_input(&input_fmt_ctx);
+    if (output_fmt_ctx) {
+        if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE))
+            avio_closep(&output_fmt_ctx->pb);
+        avformat_free_context(output_fmt_ctx);
+    }
+
+    return -1;  // 失败
+}
+
+// Lua API: encode_video (同步版本，向后兼容)
+static int l_encode_video(lua_State *L) {
+    const char *input_pattern = luaL_checkstring(L, 1);
+    const char *output_path = luaL_checkstring(L, 2);
+    int fps = luaL_optinteger(L, 3, 24);
+    int crf = luaL_optinteger(L, 4, 23);
+    const char *codec_name = luaL_optstring(L, 5, "mpeg4");
+
+    log_msg("=== encode_video (同步) ===\n");
+    log_msg("  input: %s\n", input_pattern);
+    log_msg("  output: %s\n", output_path);
+    log_msg("  fps: %d, crf: %d\n", fps, crf);
+
+    int result = encode_video_impl(input_pattern, output_path, fps, crf, codec_name);
+    
+    if (result == 0) {
+        lua_pushboolean(L, 1);
+        lua_pushnil(L);
+    } else {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "编码失败");
+    }
+    return 2;
+}
+
+// Lua API: encode_video_async (异步版本，使用 GCD)
+static int l_encode_video_async(lua_State *L) {
+    const char *input_pattern = luaL_checkstring(L, 1);
+    const char *output_path = luaL_checkstring(L, 2);
+    int fps = luaL_optinteger(L, 3, 24);
+    int crf = luaL_optinteger(L, 4, 23);
+    const char *codec_name = luaL_optstring(L, 5, "mpeg4");
+
+    log_msg("=== encode_video_async ===\n");
+
+    // 检查是否正在编码
+    if (atomic_load(&g_encode_state.status) == 1) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "编码任务正在进行中");
+        return 2;
+    }
+
+    // 保存参数
+    strncpy(g_encode_state.input_path, input_pattern, sizeof(g_encode_state.input_path) - 1);
+    strncpy(g_encode_state.output_path, output_path, sizeof(g_encode_state.output_path) - 1);
+    g_encode_state.fps = fps;
+    g_encode_state.crf = crf;
+    atomic_store(&g_encode_state.status, 1);  // running
+    atomic_store(&g_encode_state.progress, 0);
+    g_encode_state.error_msg[0] = '\0';
+    g_encode_state.encoded_frames = 0;
+
+    // GCD 异步执行
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        log_msg("[GCD] 开始异步编码...\n");
+        int result = encode_video_impl(
+            g_encode_state.input_path,
+            g_encode_state.output_path,
+            g_encode_state.fps,
+            g_encode_state.crf,
+            codec_name
+        );
+        
+        if (result == 0) {
+            atomic_store(&g_encode_state.status, 2);  // success
+            atomic_store(&g_encode_state.progress, 100);
+            log_msg("[GCD] ✓ 编码成功\n");
+        } else {
+            atomic_store(&g_encode_state.status, 3);  // error
+            strcpy(g_encode_state.error_msg, "编码失败");
+            log_msg("[GCD] ✗ 编码失败\n");
+        }
+    });
+
+    lua_pushboolean(L, 1);
+    lua_pushstring(L, "编码任务已启动");
+    return 2;
+}
+
+// Lua API: encode_status (查询异步编码状态)
+static int l_encode_status(lua_State *L) {
+    int status = atomic_load(&g_encode_state.status);
+    int progress = atomic_load(&g_encode_state.progress);
+
+    lua_createtable(L, 0, 4);
+    
+    // status: 0=idle, 1=running, 2=success, 3=error
+    lua_pushstring(L, "status");
+    lua_pushinteger(L, status);
+    lua_settable(L, -3);
+    
+    // status_text
+    lua_pushstring(L, "status_text");
+    switch (status) {
+        case 0: lua_pushstring(L, "idle"); break;
+        case 1: lua_pushstring(L, "running"); break;
+        case 2: lua_pushstring(L, "success"); break;
+        case 3: lua_pushstring(L, "error"); break;
+        default: lua_pushstring(L, "unknown"); break;
+    }
+    lua_settable(L, -3);
+    
+    // progress
+    lua_pushstring(L, "progress");
+    lua_pushinteger(L, progress);
+    lua_settable(L, -3);
+    
+    // error_msg
+    lua_pushstring(L, "error_msg");
+    lua_pushstring(L, g_encode_state.error_msg);
+    lua_settable(L, -3);
+    
+    // output_path
+    lua_pushstring(L, "output_path");
+    lua_pushstring(L, g_encode_state.output_path);
+    lua_settable(L, -3);
+    
+    // input_path
+    lua_pushstring(L, "input_path");
+    lua_pushstring(L, g_encode_state.input_path);
+    lua_settable(L, -3);
+
+    return 1;
+}
+
+// Lua API: encode_cancel (取消编码)
+static int l_encode_cancel(lua_State *L) {
+    // 注意：FFmpeg 编码不支持真正的取消，只能标记状态
+    atomic_store(&g_encode_state.status, 3);
+    strcpy(g_encode_state.error_msg, "用户取消");
+    log_msg("[GCD] 编码已取消\n");
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// 模块注册
+static const luaL_Reg funcs[] = {
+    {"start", l_start},
+    {"stop", l_stop},
+    {"status", l_status},
+    {"check", l_check},
+    {"poll", l_poll},
+    {"encode_video", l_encode_video},  // 同步编码
+    {"encode_video_async", l_encode_video_async},  // 异步编码 (GCD)
+    {"encode_status", l_encode_status},  // 查询状态
+    {"encode_cancel", l_encode_cancel},  // 取消编码
+    {NULL, NULL}
+};
+
+int luaopen_moho_ipc(lua_State *L) {
+    luaL_newlib(L, funcs);
+    log_msg("模块加载 (ScriptInterfaceHelper 执行版)\n");
+    return 1;
+}
