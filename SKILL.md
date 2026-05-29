@@ -468,7 +468,7 @@ moho-mate inspect project.moho
 | `encode <input> <output> [options]` | PNG 序列合成视频 ✨ NEW |
 | `playback <action> [args]` | 播放控制 ✨ NEW |
 
-### encode 参数（异步编码，使用 Moho 内置 FFmpeg）✨ NEW
+### encode 参数（使用 Moho 内置 FFmpeg，无需额外依赖）✨ NEW
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
@@ -479,12 +479,18 @@ moho-mate inspect project.moho
 
 **用法：**
 ```bash
-# 基本用法
+# MP4 编码（使用 Moho 内置 FFmpeg MPEG4 编码器）
 moho-mate encode "/tmp/frame_%05d.png" "/tmp/video.mp4"
 
-# 高质量
-moho-mate encode "/tmp/frame_%05d.png" "/tmp/video.mp4" --crf 18 --fps 30
+# GIF 编码（使用 Moho 内置 FFmpeg GIF 编码器）
+moho-mate encode "/tmp/frame_%05d.png" "/tmp/animation.gif"
 ```
+
+**⚠️ 重要说明：**
+- MP4/GIF 都使用 Moho 内置的 FFmpeg 库，无需安装额外依赖
+- 自动检测输入 PNG 分辨率
+- 编码在后台线程异步执行，不阻塞 Moho
+- GIF 使用 RGB8 (8-bit) 格式，编码器自动生成调色板
 
 **Lua API（异步编码）：**
 ```lua
