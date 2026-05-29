@@ -34,6 +34,104 @@
 #define IPC_TOOL "/Users/def/.openclaw/workspace/skills/moho-mate/scripts/ipc/ipc_tool.lua"
 #define MOHO_CONFIG_DIR "/Users/def/Library/Preferences/Lost Marble/Moho Pro/14"
 #define SCRIPTS_DIR "/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
+#define IPC_CONFIG_BACKUP "/tmp/moho_ipc_config_backup"
+#define IPC_BACKUP_PID_FILE "/tmp/moho_ipc_backup.pid"
+#define EMPTY_CONFIG_TEMPLATE "/Users/def/.openclaw/workspace/skills/moho-mate/scripts/ipc/empty_config"
+
+// ========== 配置管理（IPC 自动备份/恢复） ==========
+
+// IPC 配置备份（启动前）
+static int ipc_config_backup(void) {
+    // 备份到固定目录（不区分 PID）
+    char backup_dir[512];
+    snprintf(backup_dir, sizeof(backup_dir), "%s", IPC_CONFIG_BACKUP);
+    
+    // 清理旧备份
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" 2>/dev/null || true", backup_dir);
+    system(cmd);
+    
+    snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\"", backup_dir);
+    system(cmd);
+    
+    snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/ \"%s\"/", MOHO_CONFIG_DIR, backup_dir);
+    int ret = system(cmd);
+    
+    if (ret == 0) {
+        printf("✓ 配置已备份: %s\n", backup_dir);
+        // 写入 PID 文件（标记 IPC 会话）
+        FILE *f = fopen(IPC_BACKUP_PID_FILE, "w");
+        if (f) {
+            fprintf(f, "%d\n", getpid());
+            fclose(f);
+        }
+    } else {
+        fprintf(stderr, "✗ 配置备份失败\n");
+    }
+    return ret;
+}
+
+// IPC 使用空配置（清空 autosave）
+static int ipc_config_use_empty(void) {
+    char autosave_dir[512];
+    snprintf(autosave_dir, sizeof(autosave_dir), "%s/Autosave", MOHO_CONFIG_DIR);
+    
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"/* 2>/dev/null || true", autosave_dir);
+    system(cmd);
+    
+    printf("✓ Autosave 已清空\n");
+    
+    char template_path[512];
+    snprintf(template_path, sizeof(template_path), "%s", EMPTY_CONFIG_TEMPLATE);
+    
+    struct stat st;
+    if (stat(template_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/ \"%s\"/", template_path, MOHO_CONFIG_DIR);
+        system(cmd);
+        printf("✓ 空配置模板已应用\n");
+    }
+    
+    return 0;
+}
+
+// IPC 配置恢复（退出后）
+static int ipc_config_restore(void) {
+    char backup_dir[512];
+    snprintf(backup_dir, sizeof(backup_dir), "%s", IPC_CONFIG_BACKUP);
+    
+    // 检查 PID 文件（确认 IPC 会话）
+    FILE *f = fopen(IPC_BACKUP_PID_FILE, "r");
+    if (!f) {
+        printf("⚠ 无 IPC 会话标记，跳过恢复\n");
+        return 0;
+    }
+    fclose(f);
+    
+    struct stat st;
+    if (stat(backup_dir, &st) != 0) {
+        printf("⚠ 无配置备份，跳过恢复\n");
+        unlink(IPC_BACKUP_PID_FILE);
+        return 0;
+    }
+    
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"/* 2>/dev/null || true", MOHO_CONFIG_DIR);
+    system(cmd);
+    
+    snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/ \"%s\"/", backup_dir, MOHO_CONFIG_DIR);
+    int ret = system(cmd);
+    
+    if (ret == 0) {
+        printf("✓ 配置已恢复\n");
+        snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", backup_dir);
+        system(cmd);
+        unlink(IPC_BACKUP_PID_FILE);
+    } else {
+        fprintf(stderr, "✗ 配置恢复失败\n");
+    }
+    return ret;
+}
 
 // ========== IPC 辅助函数 ==========
 
@@ -170,6 +268,10 @@ static int cmd_start(int argc, char **argv) {
     unlink(IPC_SOCKET);
     sleep(1);
     
+    // 备份配置 + 使用空配置
+    ipc_config_backup();
+    ipc_config_use_empty();
+    
     // 启动 Moho IPC
     char moho_path[512];
     snprintf(moho_path, sizeof(moho_path), "%s/Contents/MacOS/Moho", MOHO_APP);
@@ -259,10 +361,26 @@ static int cmd_call(int argc, char **argv) {
 static int cmd_quit(void) {
     if (!ipc_check_running()) {
         printf("Moho 未运行\n");
+        // 即使 Moho 未运行，也尝试恢复配置
+        ipc_config_restore();
         return 0;
     }
     printf("▶ 退出 Moho\n");
-    return ipc_send("ipc_quit()");
+    int ret = ipc_send("ipc_quit()");
+    
+    // 等待 socket 断开（最多 10 秒）
+    for (int i = 0; i < 10; i++) {
+        sleep(1);
+        if (!ipc_check_running()) {
+            printf("✓ Moho 已退出\n");
+            break;
+        }
+    }
+    
+    // 恢复原有配置
+    ipc_config_restore();
+    
+    return ret;
 }
 
 // ========== status ==========
@@ -440,6 +558,7 @@ static int cmd_playback(int argc, char **argv) {
 static int cmd_render(int argc, char **argv) {
     char *project = NULL;
     char *format = "PNG";
+    char *ext = "png";  // 文件扩展名
     char *output = NULL;
     int start_frame = 0;
     int end_frame = 72;
@@ -447,6 +566,16 @@ static int cmd_render(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
             format = argv[++i];
+            // 根据格式设置扩展名
+            if (strcmp(format, "JPEG") == 0 || strcmp(format, "JPG") == 0) {
+                ext = "jpg";
+            } else if (strcmp(format, "BMP") == 0) {
+                ext = "bmp";
+            } else if (strcmp(format, "TGA") == 0) {
+                ext = "tga";
+            } else {
+                ext = "png";
+            }
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output = argv[++i];
         } else if (strcmp(argv[i], "--start") == 0 && i + 1 < argc) {
@@ -533,11 +662,11 @@ static int cmd_render(int argc, char **argv) {
         "local output_dir = \"%s\"\n"
         "for f = %d, %d do\n"
         "  moho:SetCurFrame(f, true)\n"
-        "  local frame_path = output_dir .. \"/frame_\" .. string.format(\"%%05d\", f) .. \".png\"\n"
+        "  local frame_path = output_dir .. \"/frame_\" .. string.format(\"%%05d\", f) .. \".%s\"\n"
         "  moho:FileRender(frame_path)\n"
         "end\n"
         "print('✓ PNG 渲染完成: ' .. (%d - %d + 1) .. ' 帧')",
-        png_dir, start_frame, end_frame, end_frame, start_frame);
+        png_dir, start_frame, end_frame, ext, end_frame, start_frame);
     
     int ret = ipc_send_multiline(lua_cmd);
     

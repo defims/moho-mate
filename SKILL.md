@@ -31,6 +31,38 @@ macOS 命令行工具,自动化 Moho Pro 14 操作。
    - 不退出 - Moho 保持运行,可查看结果
 3. **⚠️ IPC 脚本禁止 `moho:Quit()` → 文件损坏**
 4. **⚠️ 所有 API 调用必须先查文档** → `/Applications/Moho.app/.../Lua Interfaces`
+5. **⚠️ IPC 自动备份/恢复配置**（防止 autosave 污染）
+
+### IPC 配置自动备份/恢复
+
+**机制**：IPC 启动前备份用户配置，退出后恢复。
+
+```
+IPC 启动:
+  1. 备份 ~/Library/Preferences/Lost Marble/Moho Pro/14/ → /tmp/moho_ipc_config_backup
+  2. 清空 Autosave 目录（防止之前项目污染）
+  3. 写入 /tmp/moho_ipc_backup.pid（标记 IPC 会话）
+  4. 启动 Moho IPC
+
+IPC 退出:
+  5. 检查 /tmp/moho_ipc_backup.pid（确认是 IPC 会话）
+  6. 恢复备份 → 原配置目录
+  7. 清理备份目录和 PID 文件
+```
+
+**关键点**：
+- 使用固定目录名 `/tmp/moho_ipc_config_backup`（不区分 PID）
+- PID 文件 `/tmp/moho_ipc_backup.pid` 标记 IPC 会话
+- `quit` 会恢复配置后再退出
+
+**手动管理**（可选）:
+```bash
+# 手动备份
+moho-mate config backup
+
+# 手动恢复
+moho-mate config restore
+```
 
 ### ⚠️ 无头渲染 GIF/视频编码
 

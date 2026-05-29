@@ -18,37 +18,18 @@
 #include <errno.h>
 
 #define SOCKET_PATH "/tmp/moho_ipc.sock"
-#define TOKEN_PATH "/tmp/moho_ipc.token"
+#define SOCKET_PATH "/tmp/moho_ipc.sock"
 #define CMD_DIR "/tmp/moho_ipc_cmds"
 #define RECV_BUF_SIZE 16384
-#define TOKEN_SIZE 32
+
+// ⚠️ Token 验证已禁用（服务端不支持）
+// 原问题：客户端发送 token，服务端当成 Lua 执行
 
 static int send_command(const char *cmd, int silent) {
     int sock;
     struct sockaddr_un addr;
     char response[RECV_BUF_SIZE];
     ssize_t len;
-    char token[TOKEN_SIZE + 1] = {0};
-
-    // 读取令牌
-    FILE *tf = fopen(TOKEN_PATH, "r");
-    if (!tf) {
-        if (!silent) fprintf(stderr, "✗ IPC 未启动或令牌文件不存在\n");
-        return 1;
-    }
-    if (fgets(token, sizeof(token), tf) == NULL) {
-        fclose(tf);
-        if (!silent) fprintf(stderr, "✗ 令牌文件为空\n");
-        return 1;
-    }
-    fclose(tf);
-    
-    // 去除换行符
-    token[strcspn(token, "\n")] = '\0';
-    if (strlen(token) != TOKEN_SIZE) {
-        if (!silent) fprintf(stderr, "✗ 令牌格式错误\n");
-        return 1;
-    }
 
     // 创建 socket
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -74,14 +55,8 @@ static int send_command(const char *cmd, int silent) {
         return 1;
     }
 
-    // 发送令牌
-    if (send(sock, token, TOKEN_SIZE, 0) != TOKEN_SIZE) {
-        if (!silent) fprintf(stderr, "✗ 令牌发送失败: %s\n", strerror(errno));
-        close(sock);
-        return 1;
-    }
-
-    // 发送命令
+    // ⚠️ Token 验证已禁用
+    // 直接发送命令（服务端无 token 处理）
     if (send(sock, cmd, strlen(cmd), 0) < 0) {
         if (!silent) fprintf(stderr, "✗ 发送失败: %s\n", strerror(errno));
         close(sock);
