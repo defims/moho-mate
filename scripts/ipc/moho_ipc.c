@@ -327,6 +327,15 @@ static volatile float g_encode_progress = 0.0f;
 static char g_encode_error[256] = {0};
 static pthread_t g_encode_thread = 0;
 
+// ========== Playback 状态 ==========
+static volatile int g_play_status = 0;  // 0=stopped, 1=playing, 2=paused
+static volatile int g_play_current_frame = 0;
+static volatile int g_play_start_frame = 0;
+static volatile int g_play_end_frame = 72;
+static volatile int g_play_fps = 24;
+static CFRunLoopTimerRef g_play_timer = NULL;
+static CFRunLoopSourceRef g_play_source = NULL;
+
 // GIF 编码(使用 Moho 内置 FFmpeg + libavfilter palettegen/paletteuse)
 static void* encode_gif_thread(void *arg) {
     AVFormatContext *fmt_ctx = NULL;
@@ -1030,6 +1039,203 @@ static int l_encode_cancel(lua_State *L) {
     return 1;
 }
 
+// ========== Playback API ==========
+
+// 前向声明
+static void start_play_timer(void);
+static void stop_play_timer(void);
+
+// Lua API: play(start, end, fps)
+static int l_play(lua_State *L) {
+    g_play_start_frame = luaL_optinteger(L, 1, 0);
+    g_play_end_frame = luaL_optinteger(L, 2, 72);
+    g_play_fps = luaL_optinteger(L, 3, 24);
+    g_play_current_frame = g_play_start_frame;
+    g_play_status = 1;  // playing
+    
+    // 立即切换到起始帧
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "moho:SetCurFrame(%d, true)", g_play_current_frame);
+    if (g_L) {
+        lua_getglobal(g_L, "ipc_execute");
+        if (lua_isfunction(g_L, -1)) {
+            lua_pushstring(g_L, cmd);
+            lua_pcall(g_L, 1, 1, 0);
+            lua_pop(g_L, 1);
+        } else {
+            lua_pop(g_L, 1);
+        }
+    }
+    
+    // 启动定时器
+    start_play_timer();
+    
+    log_msg("[playback] 播放: %d-%d @ %dfps\n", g_play_start_frame, g_play_end_frame, g_play_fps);
+    
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Lua API: pause()
+static int l_pause(lua_State *L) {
+    if (g_play_status == 1) {
+        g_play_status = 2;  // paused
+        stop_play_timer();  // 停止定时器
+        log_msg("[playback] 已暂停 (frame=%d)\n", g_play_current_frame);
+    } else if (g_play_status == 2) {
+        g_play_status = 1;  // resume
+        start_play_timer();  // 重启定时器
+        log_msg("[playback] 已恢复 (frame=%d)\n", g_play_current_frame);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Lua API: stop_play()
+static int l_stop_play(lua_State *L) {
+    g_play_status = 0;  // stopped
+    g_play_current_frame = 0;
+    stop_play_timer();  // 停止定时器
+    
+    // 切换到帧 0
+    if (g_L) {
+        lua_getglobal(g_L, "ipc_execute");
+        if (lua_isfunction(g_L, -1)) {
+            lua_pushstring(g_L, "moho:SetCurFrame(0, true)");
+            lua_pcall(g_L, 1, 1, 0);
+            lua_pop(g_L, 1);
+        } else {
+            lua_pop(g_L, 1);
+        }
+    }
+    
+    log_msg("[playback] 已停止\n");
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Lua API: seek(frame)
+static int l_seek(lua_State *L) {
+    int frame = luaL_checkinteger(L, 1);
+    g_play_current_frame = frame;
+    
+    // 立即切换帧
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "moho:SetCurFrame(%d, true)", frame);
+    if (g_L) {
+        lua_getglobal(g_L, "ipc_execute");
+        if (lua_isfunction(g_L, -1)) {
+            lua_pushstring(g_L, cmd);
+            lua_pcall(g_L, 1, 1, 0);
+            lua_pop(g_L, 1);
+        } else {
+            lua_pop(g_L, 1);
+        }
+    }
+    
+    log_msg("[playback] 跳转: frame=%d\n", frame);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Lua API: play_status() -> table
+static int l_play_status(lua_State *L) {
+    lua_newtable(L);
+    
+    lua_pushinteger(L, g_play_status);
+    lua_setfield(L, -2, "status");
+    
+    const char *status_text[] = {"stopped", "playing", "paused"};
+    lua_pushstring(L, status_text[g_play_status]);
+    lua_setfield(L, -2, "status_text");
+    
+    lua_pushinteger(L, g_play_current_frame);
+    lua_setfield(L, -2, "current_frame");
+    
+    lua_pushinteger(L, g_play_start_frame);
+    lua_setfield(L, -2, "start_frame");
+    
+    lua_pushinteger(L, g_play_end_frame);
+    lua_setfield(L, -2, "end_frame");
+    
+    lua_pushinteger(L, g_play_fps);
+    lua_setfield(L, -2, "fps");
+    
+    return 1;
+}
+
+// Lua API: is_playing() -> boolean
+static int l_is_playing(lua_State *L) {
+    lua_pushboolean(L, g_play_status == 1);
+    return 1;
+}
+
+// 播放定时器回调（在主线程执行帧切换）
+static void play_timer_callback(CFRunLoopTimerRef timer, void *info) {
+    if (g_play_status != 1) return;  // 不是播放状态
+    
+    // 切换到下一帧
+    g_play_current_frame++;
+    
+    // 检查是否结束
+    if (g_play_current_frame > g_play_end_frame) {
+        g_play_current_frame = g_play_start_frame;  // 循环播放
+        // 或者停止: g_play_status = 0;
+    }
+    
+    // 执行帧切换命令
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "moho:SetCurFrame(%d, false)", g_play_current_frame);
+    
+    if (g_L) {
+        lua_getglobal(g_L, "ipc_execute");
+        if (lua_isfunction(g_L, -1)) {
+            lua_pushstring(g_L, cmd);
+            lua_pcall(g_L, 1, 1, 0);
+            lua_pop(g_L, 1);
+        } else {
+            lua_pop(g_L, 1);
+        }
+    }
+}
+
+// 启动播放定时器
+static void start_play_timer(void) {
+    if (g_play_timer) return;  // 已存在
+    
+    // 计算定时器间隔（秒）
+    double interval = 1.0 / g_play_fps;
+    
+    // 创建定时器
+    CFRunLoopTimerContext ctx = {0, NULL, NULL, NULL, NULL};
+    g_play_timer = CFRunLoopTimerCreate(
+        kCFAllocatorDefault,
+        CFAbsoluteTimeGetCurrent() + interval,  // 第一点火时间
+        interval,  // 间隔
+        0,  // flags
+        0,  // order
+        play_timer_callback,
+        &ctx
+    );
+    
+    if (g_play_timer) {
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), g_play_timer, kCFRunLoopDefaultMode);
+        log_msg("[playback] 定时器已启动 (interval=%.3fs)\n", interval);
+    }
+}
+
+// 停止播放定时器
+static void stop_play_timer(void) {
+    if (g_play_timer) {
+        CFRunLoopRemoveTimer(CFRunLoopGetCurrent(), g_play_timer, kCFRunLoopDefaultMode);
+        CFRelease(g_play_timer);
+        g_play_timer = NULL;
+        log_msg("[playback] 定时器已停止\n");
+    }
+}
+
+
+
 // 模块注册
 static const luaL_Reg funcs[] = {
     {"start", l_start},
@@ -1040,6 +1246,12 @@ static const luaL_Reg funcs[] = {
     {"encode_video", l_encode_video},
     {"encode_status", l_encode_status},
     {"encode_cancel", l_encode_cancel},
+    {"play", l_play},
+    {"pause", l_pause},
+    {"stop_play", l_stop_play},
+    {"seek", l_seek},
+    {"play_status", l_play_status},
+    {"is_playing", l_is_playing},
     {NULL, NULL}
 };
 
