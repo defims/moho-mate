@@ -18,18 +18,17 @@
 #include <errno.h>
 
 #define SOCKET_PATH "/tmp/moho_ipc.sock"
-#define SOCKET_PATH "/tmp/moho_ipc.sock"
 #define CMD_DIR "/tmp/moho_ipc_cmds"
 #define RECV_BUF_SIZE 16384
-
-// ⚠️ Token 验证已禁用（服务端不支持）
-// 原问题：客户端发送 token，服务端当成 Lua 执行
+#define TOKEN_PATH "/Users/def/.moho_ipc_token"
 
 static int send_command(const char *cmd, int silent) {
     int sock;
     struct sockaddr_un addr;
     char response[RECV_BUF_SIZE];
     ssize_t len;
+    char token[128] = {0};
+    char auth_cmd[256];
 
     // 创建 socket
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -55,8 +54,50 @@ static int send_command(const char *cmd, int silent) {
         return 1;
     }
 
-    // ⚠️ Token 验证已禁用
-    // 直接发送命令（服务端无 token 处理）
+    // 读取 token
+    FILE *tf = fopen(TOKEN_PATH, "r");
+    if (tf) {
+        if (fgets(token, sizeof(token), tf) != NULL) {
+            // 去除尾部换行
+            size_t len = strlen(token);
+            while (len > 0 && (token[len-1] == '\n' || token[len-1] == '\r')) {
+                token[--len] = 0;
+            }
+        }
+        fclose(tf);
+    }
+
+    // 发送 auth 命令
+    snprintf(auth_cmd, sizeof(auth_cmd), "auth %s", token);
+    if (send(sock, auth_cmd, strlen(auth_cmd), 0) < 0) {
+        if (!silent) fprintf(stderr, "✗ 发送 auth 失败: %s\n", strerror(errno));
+        close(sock);
+        return 1;
+    }
+
+    // 接收 auth 响应
+    len = recv(sock, response, RECV_BUF_SIZE - 1, 0);
+    if (len <= 0) {
+        if (!silent) fprintf(stderr, "✗ Auth 无响应\n");
+        close(sock);
+        return 1;
+    }
+    response[len] = '\0';
+
+    // 检查 auth 结果
+    if (strncmp(response, "ok|authenticated", 16) != 0) {
+        if (!silent) {
+            if (strncmp(response, "error|", 6) == 0) {
+                fprintf(stderr, "✗ Token 验证失败: %s\n", response + 6);
+            } else {
+                fprintf(stderr, "✗ Token 验证失败: %s\n", response);
+            }
+        }
+        close(sock);
+        return 1;
+    }
+
+    // 发送实际命令
     if (send(sock, cmd, strlen(cmd), 0) < 0) {
         if (!silent) fprintf(stderr, "✗ 发送失败: %s\n", strerror(errno));
         close(sock);

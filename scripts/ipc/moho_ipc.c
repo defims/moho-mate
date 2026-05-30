@@ -27,6 +27,8 @@
 #include <stdarg.h>
 #include <pthread.h>
 #include <dispatch/dispatch.h>
+#include <time.h>
+#include <sys/stat.h>
 
 // FFmpeg headers
 #include <libavcodec/avcodec.h>
@@ -42,6 +44,8 @@
 #define CMD_SIZE 8192
 #define RESP_SIZE 16384  // 响应缓冲区大小
 #define SCRIPTS_DIR "/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
+#define TOKEN_PATH "/Users/def/.moho_ipc_token"
+#define TOKEN_LEN 32
 
 static lua_State *g_L = NULL;
 static char g_response[RESP_SIZE];  // 存储响应
@@ -51,6 +55,10 @@ static CFRunLoopSourceRef g_listen_source = NULL;
 static CFRunLoopSourceRef g_client_source = NULL;
 static int g_call_count = 0;
 static int g_error_count = 0;
+
+// Token 验证
+static char g_token[TOKEN_LEN + 1] = {0};
+static volatile int g_authenticated = 0;  // 0=未验证, 1=已验证
 
 // 日志
 static void log_msg(const char *fmt, ...) {
@@ -63,6 +71,56 @@ static void log_msg(const char *fmt, ...) {
         va_end(args);
         fclose(f);
     }
+}
+
+// 生成随机 token
+static void generate_token(void) {
+    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    FILE *urandom = fopen("/dev/urandom", "rb");
+    if (urandom) {
+        unsigned char buf[TOKEN_LEN];
+        if (fread(buf, 1, TOKEN_LEN, urandom) == TOKEN_LEN) {
+            for (int i = 0; i < TOKEN_LEN; i++) {
+                g_token[i] = charset[buf[i] % (sizeof(charset) - 1)];
+            }
+            g_token[TOKEN_LEN] = 0;
+        }
+        fclose(urandom);
+    } else {
+        // fallback: 使用时间戳
+        snprintf(g_token, sizeof(g_token), "%ld%ld", (long)time(NULL), (long)clock());
+    }
+}
+
+// 保存 token 到文件
+static int save_token(void) {
+    FILE *f = fopen(TOKEN_PATH, "w");
+    if (!f) {
+        log_msg("✗ 无法保存 token: %s\n", TOKEN_PATH);
+        return 0;
+    }
+    fprintf(f, "%s", g_token);
+    fclose(f);
+    // 设置权限：仅所有者可读
+    chmod(TOKEN_PATH, 0600);
+    log_msg("✓ Token 已保存: %s\n", TOKEN_PATH);
+    return 1;
+}
+
+// 验证 token 命令
+static int verify_token(const char *cmd) {
+    // cmd 格式: "auth <token>"
+    if (strncmp(cmd, "auth ", 5) != 0) {
+        return 0;  // 不是 auth 命令
+    }
+    const char *provided = cmd + 5;
+    if (strlen(provided) >= TOKEN_LEN && strncmp(provided, g_token, TOKEN_LEN) == 0) {
+        g_authenticated = 1;
+        log_msg("✓ Token 验证成功\n");
+        return 1;  // 验证成功
+    }
+    log_msg("✗ Token 验证失败\n");
+    return -1;  // 验证失败
 }
 
 // 执行命令(通过 Lua 的 ipc_execute,内部使用 ScriptInterfaceHelper)
@@ -121,10 +179,29 @@ static void client_callback(CFSocketRef s, CFSocketCallBackType type,
 
     if (n > 0) {
         buf[n] = 0;
+        // 去除尾部换行
+        while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) {
+            buf[--n] = 0;
+        }
         log_msg("收到命令 (%zd bytes): %.60s...\n", n, buf);
 
-        // 通过 ipc_execute 执行(内部使用 ScriptInterfaceHelper)
-        const char *response = execute_via_helper(buf);
+        const char *response;
+
+        // Token 验证检查
+        if (!g_authenticated) {
+            int verify_result = verify_token(buf);
+            if (verify_result == 1) {
+                response = "ok|authenticated";
+            } else if (verify_result == -1) {
+                response = "error|unauthorized";
+            } else {
+                // 不是 auth 命令，需要先验证
+                response = "error|need auth";
+            }
+        } else {
+            // 已验证，执行命令
+            response = execute_via_helper(buf);
+        }
 
         // 发送完整响应
         int resp_len = strlen(response);
@@ -132,6 +209,8 @@ static void client_callback(CFSocketRef s, CFSocketCallBackType type,
         write(fd, "\n", 1);
     } else if (n == 0 || (n < 0 && errno != EAGAIN)) {
         log_msg("客户端断开\n");
+        // 断开时重置验证状态
+        g_authenticated = 0;
         if (g_client_socket) {
             CFSocketInvalidate(g_client_socket);
             CFRelease(g_client_socket);
@@ -201,6 +280,15 @@ static int l_start(lua_State *L) {
         lua_pushstring(L, "already running");
         return 2;
     }
+
+    // 生成并保存 token
+    generate_token();
+    if (!save_token()) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "save token failed");
+        return 2;
+    }
+    log_msg("✓ Token: %.8s...\n", g_token);
 
     unlink(SOCKET_PATH);
 
