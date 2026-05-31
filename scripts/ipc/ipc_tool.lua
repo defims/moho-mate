@@ -29,12 +29,7 @@ end
 
 -- ===== IPC 命令执行 (C 实现) =====
 -- execute_via_helper 在 moho_ipc.c 中直接实现
-
-_G.ipc_quit = function()
-    log("[IPC] quit")
-    ipc.stop()
-    moho:Quit()
-end
+-- ipc.quit() 在 moho_ipc.c 中直接实现
 
 -- ===== 主入口 =====
 function MohoScript(moho)
@@ -46,11 +41,12 @@ function MohoScript(moho)
     package.cpath = exe_path .. ";" .. package.cpath
     package.loaded["moho_ipc"] = nil
 
-    local ok, ipc = pcall(require, "moho_ipc")
+    local ok, ipc_module = pcall(require, "moho_ipc")
     if not ok then
-        log("✗ 模块加载失败: " .. tostring(ipc))
+        log("✗ 模块加载失败: " .. tostring(ipc_module))
         return
     end
+    _G.ipc = ipc_module  -- 设置全局 ipc
     log("✓ 模块已加载: " .. exe_path)
 
     -- 启动 socket

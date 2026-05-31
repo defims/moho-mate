@@ -1817,10 +1817,37 @@ static void stop_play_timer(void) {
 
 
 
+// Lua API: quit()
+// 停止 IPC 并退出 Moho
+static int l_quit(lua_State *L) {
+    log_msg("=== IPC quit ===\n");
+    
+    // 1. 停止 IPC
+    l_stop(L);
+    
+    // 2. 获取 moho 对象并调用 Quit
+    lua_getglobal(L, "moho");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "Quit");
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, -2);  // self = moho
+            lua_pcall(L, 1, 0, 0);
+            log_msg("✓ moho:Quit() 已调用\n");
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 // 模块注册
 static const luaL_Reg funcs[] = {
     {"start", l_start},
     {"stop", l_stop},
+    {"quit", l_quit},
     {"status", l_status},
     {"check", l_check},
     {"poll", l_poll},
