@@ -107,9 +107,6 @@ function MohoScript(moho)
 
     _G.ping = function() return "pong" end
 
-    -- C 代码期望 ipc_dispatch，提供别名
-    _G.ipc_dispatch = _G.ipc_execute
-    log("✓ ipc_dispatch 已注册")
 
     _G.ipc_quit = function()
         log("[IPC] quit")
