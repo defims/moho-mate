@@ -24,6 +24,7 @@
 #include <time.h>
 #include <spawn.h>
 #include <signal.h>
+#include <curl/curl.h>
 
 // ========== 配置 ==========
 
@@ -134,38 +135,119 @@ static int ipc_config_restore(void) {
 
 // ========== IPC 辅助函数 ==========
 
-static int ipc_send(const char *cmd) {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/moho_ipc_client", SCRIPTS_DIR);
-    
-    char *args[] = {path, cmd, NULL};
-    pid_t pid;
-    int status;
-    
-    if (posix_spawn(&pid, path, NULL, NULL, args, NULL) != 0) {
-        fprintf(stderr, "✗ IPC 命令执行失败\n");
+// ========== IPC 客户端 ==========
+
+// curl 写回调
+static size_t write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    char *buf = (char*)userdata;
+    size_t total = size * nmemb;
+    strncpy(buf, (char*)ptr, total < 511 ? total : 511);
+    buf[total < 511 ? total : 511] = 0;
+    return total;
+}
+
+static int ipc_send_raw(const char *cmd) {
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+        fprintf(stderr, "✗ Socket 创建失败\n");
         return 1;
     }
     
-    waitpid(pid, &status, 0);
-    return WEXITSTATUS(status);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, IPC_SOCKET, sizeof(addr.sun_path) - 1);
+    
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        fprintf(stderr, "✗ IPC 连接失败（服务未启动？）\n");
+        return 1;
+    }
+    
+    // 获取 token
+    char token[128] = "";
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        char url[256];
+        snprintf(url, sizeof(url), "http://127.0.0.1:9527/token/create");
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        
+        char response[512] = "";
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{\"client_id\":\"moho-mate\"}");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+        curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+        curl_slist_free_all(headers);
+        
+        // 解析 token: {"token":"xxx",...}
+        char *t = strstr(response, "\"token\":\"");
+        if (t) {
+            t += 9;  // skip "token":""
+            char *end = strchr(t, '"');
+            if (end) {
+                int len = end - t;
+                if (len > 0 && len < (int)sizeof(token)) {
+                    strncpy(token, t, len);
+                    token[len] = 0;
+                }
+            }
+        }
+    }
+    
+    // 发送 auth
+    char auth_cmd[256];
+    snprintf(auth_cmd, sizeof(auth_cmd), "auth %s", token);
+    send(sock, auth_cmd, strlen(auth_cmd), 0);
+    send(sock, "\n", 1, 0);
+    
+    char resp[1024];
+    int n = recv(sock, resp, sizeof(resp) - 1, 0);
+    if (n > 0) {
+        resp[n] = 0;
+        if (strncmp(resp, "ok|", 3) != 0) {
+            close(sock);
+            fprintf(stderr, "✗ Token 验证失败: %s", resp);
+            return 1;
+        }
+    }
+    
+    // 发送命令
+    send(sock, cmd, strlen(cmd), 0);
+    send(sock, "\n", 1, 0);
+    
+    // 接收响应
+    n = recv(sock, resp, sizeof(resp) - 1, 0);
+    close(sock);
+    
+    if (n > 0) {
+        resp[n] = 0;
+        // 去除尾部换行
+        while (n > 0 && (resp[n-1] == '\n' || resp[n-1] == '\r')) resp[--n] = 0;
+        
+        if (strncmp(resp, "ok|", 3) == 0) {
+            printf("%s\n", resp + 3);
+            return 0;
+        } else {
+            fprintf(stderr, "✗ %s\n", resp);
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+static int ipc_send(const char *cmd) {
+    return ipc_send_raw(cmd);
 }
 
 static int ipc_send_file(const char *filepath) {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/moho_ipc_client", SCRIPTS_DIR);
-    
-    char *args[] = {path, "-f", filepath, NULL};
-    pid_t pid;
-    int status;
-    
-    if (posix_spawn(&pid, path, NULL, NULL, args, NULL) != 0) {
-        fprintf(stderr, "✗ IPC 命令执行失败\n");
-        return 1;
-    }
-    
-    waitpid(pid, &status, 0);
-    return WEXITSTATUS(status);
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "dofile(\"%s\")", filepath);
+    return ipc_send_raw(cmd);
 }
 
 static int ipc_send_multiline(const char *code) {
