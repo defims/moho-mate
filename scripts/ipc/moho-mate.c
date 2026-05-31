@@ -251,6 +251,9 @@ static int ipc_send_raw(const char *cmd) {
         }
     }
     
+    // 小延迟确保响应分离
+    usleep(10000);  // 10ms
+    
     // 发送命令
     send(sock, cmd, strlen(cmd), 0);
     send(sock, "\n", 1, 0);
@@ -261,14 +264,18 @@ static int ipc_send_raw(const char *cmd) {
     
     if (n > 0) {
         resp[n] = 0;
+        // 跳过开头的空白字符
+        char *p = resp;
+        while (*p == '\n' || *p == '\r' || *p == ' ') p++;
         // 去除尾部换行
-        while (n > 0 && (resp[n-1] == '\n' || resp[n-1] == '\r')) resp[--n] = 0;
+        int len = strlen(p);
+        while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r')) p[--len] = 0;
         
-        if (strncmp(resp, "ok|", 3) == 0) {
-            printf("%s\n", resp + 3);
+        if (strncmp(p, "ok|", 3) == 0) {
+            printf("%s\n", p + 3);
             return 0;
         } else {
-            fprintf(stderr, "✗ %s\n", resp);
+            fprintf(stderr, "✗ %s\n", p);
             return 1;
         }
     }
@@ -1239,16 +1246,32 @@ static const char* execute_via_helper(const char *cmd) {
     
     lua_pop(g_L, 2);  // pop MOHO and ScriptInterfaceHelper
     
-    // 5. 设置 print hook 捕获输出
+    // 5. 清空栈，确保干净状态
+    lua_pop(g_L, lua_gettop(g_L));
+    
+    // 6. 设置 print hook 捕获输出
     lua_getglobal(g_L, "print");
     lua_setglobal(g_L, "_original_print");
     lua_pushcfunction(g_L, capture_print);
     lua_setglobal(g_L, "print");
     
-    // 6. 执行命令
+    // 7. 执行命令
+    log_msg("执行前栈大小: %d\n", lua_gettop(g_L));
     int ret = luaL_dostring(g_L, cmd);
+    log_msg("执行后栈大小: %d\n", lua_gettop(g_L));
     
-    // 7. 恢复 print
+    // 8. 保存返回值
+    char retval[512] = "";
+    int nresults = lua_gettop(g_L);
+    if (nresults > 0) {
+        const char *s = lua_tostring(g_L, -1);
+        if (s) {
+            strncpy(retval, s, sizeof(retval) - 1);
+        }
+    }
+    
+    // 9. 恢复 print
+    lua_pop(g_L, lua_gettop(g_L));  // 清空栈
     lua_getglobal(g_L, "_original_print");
     lua_setglobal(g_L, "print");
     
@@ -1256,13 +1279,15 @@ static const char* execute_via_helper(const char *cmd) {
         log_msg("✗ 执行错误: %s\n", lua_tostring(g_L, -1));
         const char *err = lua_tostring(g_L, -1);
         snprintf(g_response, RESP_SIZE, "error|%s", err ? err : "unknown");
-        lua_pop(g_L, 1);
+        lua_pop(g_L, lua_gettop(g_L));
         g_error_count++;
         return g_response;
     }
     
-    // 8. 返回结果
-    if (g_output_len > 0) {
+    // 10. 返回结果
+    if (retval[0]) {
+        snprintf(g_response, RESP_SIZE, "ok|%s", retval);
+    } else if (g_output_len > 0) {
         snprintf(g_response, RESP_SIZE, "ok|%s", g_output_buffer);
     } else {
         strcpy(g_response, "ok|(无输出)");
