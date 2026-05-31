@@ -44,57 +44,8 @@ local function release_helper()
     end
 end
 
--- ===== IPC 命令执行 =====
-local original_print = print
-local output_buffer = {}
-
-local function capture_print(...)
-    local args = {}
-    for i = 1, select("#", ...) do
-        args[i] = tostring(select(i, ...))
-    end
-    output_buffer[#output_buffer + 1] = table.concat(args, "\t")
-    original_print(table.concat(args, "\t"))
-end
-
-_G.ipc_execute = function(cmd)
-    log("[IPC] 执行: " .. string.sub(cmd, 1, 60))
-
-    local moho_obj = get_moho()
-    if not moho_obj then
-        log("✗ MohoObject 返回 nil")
-        return "error|moho nil"
-    end
-
-    _G.moho = moho_obj
-
-    -- 捕获输出
-    output_buffer = {}
-    print = capture_print
-
-    local fn, err = load(cmd)
-    if not fn then
-        print = original_print
-        log("✗ 编译错误: " .. tostring(err))
-        return "error|" .. tostring(err)
-    end
-
-    local ok, result = pcall(fn)
-    print = original_print
-
-    if not ok then
-        log("✗ 执行错误: " .. tostring(result))
-        return "error|" .. tostring(result)
-    end
-
-    log("[IPC] ✓ 执行成功")
-    local output = table.concat(output_buffer, "\n")
-    return "ok|" .. (output == "" and "(无输出)" or output)
-end
-
-_G.ping = function()
-    return "pong"
-end
+-- ===== IPC 命令执行 (C 实现) =====
+-- execute_via_helper 在 moho_ipc.c 中直接实现
 
 _G.ipc_quit = function()
     log("[IPC] quit")

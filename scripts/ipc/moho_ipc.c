@@ -46,12 +46,15 @@
 #define SOCKET_PATH "/tmp/moho_ipc.sock"
 #define CMD_SIZE 8192
 #define RESP_SIZE 16384  // 响应缓冲区大小
+#define OUTPUT_SIZE 16384  // 输出捕获缓冲区
 #define SCRIPTS_DIR "/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
 #define TOKEN_SERVICE_URL "http://127.0.0.1:9527/token/verify"
 #define HTTP_BUF_SIZE 4096
 
 static lua_State *g_L = NULL;
 static char g_response[RESP_SIZE];  // 存储响应
+static char g_output_buffer[OUTPUT_SIZE];  // 捕获输出
+static size_t g_output_len = 0;
 static CFSocketRef g_listen_socket = NULL;
 static CFSocketRef g_client_socket = NULL;
 static CFRunLoopSourceRef g_listen_source = NULL;
@@ -179,48 +182,150 @@ static int verify_token(const char *cmd) {
     return -1;  // 验证失败
 }
 
-// 执行命令(通过 Lua 的 ipc_execute,内部使用 ScriptInterfaceHelper)
-// 返回响应字符串(存储在 g_response)
+// 捕获输出的 print hook
+static int capture_print(lua_State *L) {
+    int n = lua_gettop(L);
+    luaL_Buffer b;
+    luaL_buffinit(L, &b);
+    for (int i = 1; i <= n; i++) {
+        if (i > 1) luaL_addchar(&b, '\t');
+        luaL_addstring(&b, luaL_tolstring(L, i, NULL));
+        lua_pop(L, 1);
+    }
+    luaL_pushresult(&b);
+    const char *str = lua_tostring(L, -1);
+    
+    // 写入输出缓冲
+    size_t len = strlen(str);
+    if (g_output_len + len + 1 < OUTPUT_SIZE) {
+        if (g_output_len > 0) {
+            g_output_buffer[g_output_len++] = '\n';
+        }
+        memcpy(g_output_buffer + g_output_len, str, len);
+        g_output_len += len;
+        g_output_buffer[g_output_len] = 0;
+    }
+    
+    // 也输出到原始 print
+    lua_getglobal(L, "_original_print");
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);  // str
+        lua_pcall(L, 1, 0, 0);
+    } else {
+        lua_pop(L, 1);
+    }
+    
+    return 0;
+}
+
+// 执行命令 (直接在 C 中实现，不依赖 Lua 的 ipc_execute)
 static const char* execute_via_helper(const char *cmd) {
     if (g_L == NULL) {
         log_msg("✗ g_L is NULL\n");
         return "error|g_L is NULL";
     }
 
-    // 获取 ipc_execute 函数
-    lua_getglobal(g_L, "ipc_execute");
-    if (!lua_isfunction(g_L, -1)) {
-        log_msg("✗ ipc_execute not found\n");
-        lua_pop(g_L, 1);
-        return "error|ipc_execute not found";
-    }
-
-    // 推入命令参数
-    lua_pushstring(g_L, cmd);
-
     g_call_count++;
-    int ret = lua_pcall(g_L, 1, 1, 0);
+    g_output_len = 0;
+    g_output_buffer[0] = 0;
 
-    if (ret != 0) {
-        log_msg("✗ lua_pcall failed (ret=%d): %s\n", ret, lua_tostring(g_L, -1));
+    // 1. 获取 MOHO.ScriptInterfaceHelper
+    lua_getglobal(g_L, "MOHO");
+    if (!lua_istable(g_L, -1)) {
+        log_msg("✗ MOHO not found\n");
         lua_pop(g_L, 1);
         g_error_count++;
-        return "error|lua_pcall failed";
+        return "error|MOHO not found";
     }
-
-    // 获取返回值并存储到 g_response
-    const char *result = lua_tostring(g_L, -1);
-    if (result) {
-        strncpy(g_response, result, RESP_SIZE - 1);
-        g_response[RESP_SIZE - 1] = 0;
+    
+    lua_getfield(g_L, -1, "ScriptInterfaceHelper");
+    if (!lua_istable(g_L, -1)) {
+        log_msg("✗ ScriptInterfaceHelper not found\n");
+        lua_pop(g_L, 2);
+        g_error_count++;
+        return "error|ScriptInterfaceHelper not found";
+    }
+    
+    // 2. 创建 helper 实例: helper = MOHO.ScriptInterfaceHelper:new_local()
+    lua_getfield(g_L, -1, "new_local");
+    if (!lua_isfunction(g_L, -1)) {
+        log_msg("✗ new_local not found\n");
+        lua_pop(g_L, 3);
+        g_error_count++;
+        return "error|new_local not found";
+    }
+    
+    // 调用 new_local(ScriptInterfaceHelper)
+    lua_pushvalue(g_L, -2);  // self = ScriptInterfaceHelper
+    if (lua_pcall(g_L, 1, 1, 0) != 0) {
+        log_msg("✗ new_local failed: %s\n", lua_tostring(g_L, -1));
+        lua_pop(g_L, 3);
+        g_error_count++;
+        return "error|new_local failed";
+    }
+    
+    // 栈: MOHO, ScriptInterfaceHelper, helper
+    // helper 实例在栈顶
+    
+    // 3. 获取 moho 对象: helper:MohoObject()
+    lua_getfield(g_L, -1, "MohoObject");
+    if (!lua_isfunction(g_L, -1)) {
+        log_msg("✗ MohoObject not found\n");
+        lua_pop(g_L, 4);
+        g_error_count++;
+        return "error|MohoObject not found";
+    }
+    
+    lua_pushvalue(g_L, -2);  // self = helper
+    if (lua_pcall(g_L, 1, 1, 0) != 0) {
+        log_msg("✗ MohoObject failed: %s\n", lua_tostring(g_L, -1));
+        lua_pop(g_L, 4);
+        g_error_count++;
+        return "error|MohoObject failed";
+    }
+    
+    // 栈: MOHO, ScriptInterfaceHelper, helper, moho
+    
+    // 4. 设置全局 moho
+    lua_setglobal(g_L, "moho");
+    // 栈: MOHO, ScriptInterfaceHelper, helper
+    
+    // 保存 helper 到 registry (用于后续清理)
+    lua_setfield(g_L, LUA_REGISTRYINDEX, "_ipc_helper");
+    // 栈: MOHO, ScriptInterfaceHelper
+    
+    lua_pop(g_L, 2);  // pop MOHO and ScriptInterfaceHelper
+    
+    // 5. 设置 print hook 捕获输出
+    lua_getglobal(g_L, "print");
+    lua_setglobal(g_L, "_original_print");
+    lua_pushcfunction(g_L, capture_print);
+    lua_setglobal(g_L, "print");
+    
+    // 6. 执行命令
+    int ret = luaL_dostring(g_L, cmd);
+    
+    // 7. 恢复 print
+    lua_getglobal(g_L, "_original_print");
+    lua_setglobal(g_L, "print");
+    
+    if (ret != 0) {
+        log_msg("✗ 执行错误: %s\n", lua_tostring(g_L, -1));
+        const char *err = lua_tostring(g_L, -1);
+        snprintf(g_response, RESP_SIZE, "error|%s", err ? err : "unknown");
+        lua_pop(g_L, 1);
+        g_error_count++;
+        return g_response;
+    }
+    
+    // 8. 返回结果
+    if (g_output_len > 0) {
+        snprintf(g_response, RESP_SIZE, "ok|%s", g_output_buffer);
     } else {
-        strcpy(g_response, "ok|(nil)");
+        strcpy(g_response, "ok|(无输出)");
     }
-    lua_pop(g_L, 1);
-
-    log_msg("ipc_execute returned: %.100s (calls=%d, errors=%d)\n",
-            g_response, g_call_count, g_error_count);
-
+    
+    log_msg("✓ 执行成功 (calls=%d, errors=%d)\n", g_call_count, g_error_count);
     return g_response;
 }
 
