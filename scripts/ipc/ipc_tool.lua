@@ -92,10 +92,6 @@ _G.ipc_execute = function(cmd)
     return "ok|" .. (output == "" and "(无输出)" or output)
 end
 
-_G.ping = function()
-    return "pong"
-end
-
 _G.ipc_quit = function()
     log("[IPC] quit")
     ipc.stop()
