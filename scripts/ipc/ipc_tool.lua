@@ -152,4 +152,3 @@ function MohoScript(moho)
     log("超时: " .. IPC_TIMEOUT .. "s")
 end
 
-function LayerScript(moho) end
