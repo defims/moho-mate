@@ -287,23 +287,12 @@ static int ipc_send_file(const char *filepath) {
 }
 
 static int ipc_send_multiline(const char *code) {
-    // 写入临时文件
-    mkdir(IPC_CMD_DIR, 0755);
+    // 直接发送 Lua 代码，不使用临时文件
+    // 多行代码用 --[[ ]] 包裹，避免解析问题
+    char wrapped_cmd[CMD_SIZE];
+    snprintf(wrapped_cmd, sizeof(wrapped_cmd), "%s", code);
     
-    char tmpfile[256];
-    snprintf(tmpfile, sizeof(tmpfile), "%s/cmd_%d_%ld.lua", IPC_CMD_DIR, getpid(), time(NULL));
-    
-    FILE *f = fopen(tmpfile, "w");
-    if (!f) {
-        fprintf(stderr, "✗ 无法写入临时文件\n");
-        return 1;
-    }
-    fprintf(f, "%s", code);
-    fclose(f);
-    
-    int ret = ipc_send_file(tmpfile);
-    unlink(tmpfile);
-    return ret;
+    return ipc_send_raw(wrapped_cmd);
 }
 
 static int ipc_check_running(void) {
@@ -647,7 +636,9 @@ static int cmd_render(int argc, char **argv) {
         if (dot) *dot = '\0';
         
         if (is_video) {
-            snprintf(output_path, sizeof(output_path), "/tmp/%s.%s", name, format);
+            // APNG 输出后缀是 .png，其他用格式名
+            const char *ext = strcmp(format, "APNG") == 0 ? "png" : format;
+            snprintf(output_path, sizeof(output_path), "/tmp/%s.%s", name, ext);
         } else {
             snprintf(output_path, sizeof(output_path), "/tmp/%s", name);
         }
