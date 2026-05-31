@@ -1,4 +1,4 @@
--- ipc_tool.lua - Moho IPC Tool
+-- ipc.lua - Moho IPC 初始化脚本
 -- 版本: 1.0.0
 -- 功能: IPC Socket 服务 + FFmpeg 视频编码
 

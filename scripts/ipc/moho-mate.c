@@ -31,7 +31,7 @@
 #define MOHO_APP "/Applications/Moho.app"
 #define IPC_SOCKET "/tmp/moho_ipc.sock"
 #define IPC_CMD_DIR "/tmp/moho_ipc_cmds"
-#define IPC_TOOL "/Users/def/.openclaw/workspace/skills/moho-mate/scripts/ipc/ipc_tool.lua"
+#define IPC_TOOL "/Users/def/.openclaw/workspace/skills/moho-mate/scripts/ipc/ipc.lua"
 #define MOHO_CONFIG_DIR "/Users/def/Library/Preferences/Lost Marble/Moho Pro/14"
 #define SCRIPTS_DIR "/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
 #define IPC_CONFIG_BACKUP "/tmp/moho_ipc_config_backup"
@@ -367,8 +367,8 @@ static int cmd_start(int argc, char **argv) {
         return 1;
     }
     
-    // 写入 IPC 启动代码（使用 ipc_tool.lua 模板）
-    // 设置变量供 ipc_tool.lua 使用
+    // 写入 IPC 启动代码（使用 ipc.lua 模板）
+    // 设置变量供 ipc.lua 使用
     fprintf(f, "IPC_DIR = \"%s\"\n", SCRIPTS_DIR);
     fprintf(f, "USER_PROJECT = \"%s\"\n", project ? project : "");
     fprintf(f, "USER_SCRIPT = \"%s\"\n", script ? script : "");
