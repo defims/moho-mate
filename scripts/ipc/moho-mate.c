@@ -9,7 +9,6 @@
  *   moho-mate status
  *   moho-mate render project.moho -f PNG -o output
  *   moho-mate encode input output --fps 24
- *   moho-mate playback play|pause|stop|seek|status
  */
 
 #include <stdio.h>
@@ -449,115 +448,9 @@ static int cmd_encode(int argc, char **argv) {
     return ipc_send_multiline(lua_cmd);
 }
 
-// ========== playback ==========
-
-static int cmd_playback(int argc, char **argv) {
-    char *action = argc > 1 ? argv[1] : "status";
-    
-    auto_start_ipc();
-    
-    if (strcmp(action, "play") == 0) {
-        // 检查是否需要从项目获取帧范围
-        int start = 0, end = 72, fps = 24;
-        int use_project_range = (argc <= 2);  // 无参数时使用项目帧范围
-        
-        if (use_project_range) {
-            // 先查询项目帧范围
-            printf("▶ 查询项目帧范围...\n");
-            char *query = "local doc = moho.document; "
-                         "local startF = doc:StartFrame(); "
-                         "local endF = doc:EndFrame(); "
-                         "local fpsF = doc:Fps(); "
-                         "print(startF .. '|' .. endF .. '|' .. fpsF)";
-            
-            // 执行查询并解析结果
-            char tmpfile[256];
-            snprintf(tmpfile, sizeof(tmpfile), "/tmp/moho_ipc_cmds/play_query_%d.lua", getpid());
-            mkdir("/tmp/moho_ipc_cmds", 0755);
-            FILE *f = fopen(tmpfile, "w");
-            if (f) {
-                fprintf(f, "%s", query);
-                fclose(f);
-            }
-            
-            // 调用 moho_ipc_client 获取结果
-            char cmdpath[512];
-            snprintf(cmdpath, sizeof(cmdpath), "%s/moho_ipc_client", SCRIPTS_DIR);
-            
-            char read_cmd[1024];
-            snprintf(read_cmd, sizeof(read_cmd), 
-                "%s -q 'local doc = moho.document; "
-                "print(doc:StartFrame() .. \"|\" .. doc:EndFrame() .. \"|\" .. doc:Fps())' 2>/dev/null",
-                cmdpath);
-            
-            FILE *fp = popen(read_cmd, "r");
-            if (fp) {
-                char buf[256];
-                if (fgets(buf, sizeof(buf), fp)) {
-                    // 解析 "start|end|fps"
-                    char *s = strtok(buf, "|\n");
-                    char *e = strtok(NULL, "|\n");
-                    char *fr = strtok(NULL, "|\n");
-                    if (s && e && fr) {
-                        start = atoi(s);
-                        end = atoi(e);
-                        fps = atoi(fr);
-                        if (fps <= 0) fps = 24;
-                    }
-                }
-                pclose(fp);
-            }
-            unlink(tmpfile);
-        } else {
-            // 用户指定了参数
-            start = argc > 2 ? atoi(argv[2]) : 0;
-            end = argc > 3 ? atoi(argv[3]) : 72;
-            fps = argc > 4 ? atoi(argv[4]) : 24;
-        }
-        
-        printf("▶ 播放: %d-%d @ %dfps%s\n", start, end, fps, 
-               use_project_range ? " (项目帧范围)" : "");
-        
-        char lua_cmd[256];
-        snprintf(lua_cmd, sizeof(lua_cmd),
-            "local ipc = require('moho_ipc')\n"
-            "ipc.play(%d, %d, %d)\n"
-            "print('✓ 播放启动')",
-            start, end, fps);
-        return ipc_send_multiline(lua_cmd);
-        
-    } else if (strcmp(action, "pause") == 0) {
-        printf("▶ 暂停/恢复\n");
-        return ipc_send("local ipc = require('moho_ipc'); ipc.pause(); print('✓ 已暂停/恢复')");
-        
-    } else if (strcmp(action, "stop") == 0) {
-        printf("▶ 停止播放\n");
-        return ipc_send("local ipc = require('moho_ipc'); ipc.stop_play(); print('✓ 已停止')");
-        
-    } else if (strcmp(action, "seek") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "用法: moho-mate playback seek <frame>\n");
-            return 1;
-        }
-        int frame = atoi(argv[2]);
-        printf("▶ 跳转到帧: %d\n", frame);
-        
-        char lua_cmd[128];
-        snprintf(lua_cmd, sizeof(lua_cmd),
-            "local ipc = require('moho_ipc'); ipc.seek(%d); print('✓ 已跳转: %d')",
-            frame, frame);
-        return ipc_send(lua_cmd);
-        
-    } else if (strcmp(action, "status") == 0) {
-        return ipc_send("local ipc = require('moho_ipc'); local s = ipc.play_status(); print('状态: ', s.status, '帧: ', s.current_frame)");
-        
-    } else {
-        fprintf(stderr, "用法: moho-mate playback play|pause|stop|seek|status\n");
-        return 1;
-    }
-}
-
 // ========== render ==========
+
+
 
 static int cmd_render(int argc, char **argv) {
     char *project = NULL;
@@ -945,7 +838,6 @@ static void print_usage(const char *prog) {
     printf("  %s draw <shape>                    绘制形状（不保存）\n", prog);
     printf("  %s inspect <project.moho>                查看项目\n", prog);
     printf("  %s config list|backup|restore           配置管理\n", prog);
-    printf("  %s playback play|pause|stop|status       播放控制\n", prog);
 }
 
 int main(int argc, char **argv) {
@@ -966,8 +858,6 @@ int main(int argc, char **argv) {
         return cmd_status();
     } else if (strcmp(cmd, "encode") == 0) {
         return cmd_encode(argc - 1, argv + 1);
-    } else if (strcmp(cmd, "playback") == 0) {
-        return cmd_playback(argc - 1, argv + 1);
     } else if (strcmp(cmd, "render") == 0) {
         return cmd_render(argc - 1, argv + 1);
     } else if (strcmp(cmd, "draw") == 0) {
