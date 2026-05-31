@@ -20,6 +20,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
@@ -44,8 +47,8 @@
 #define CMD_SIZE 8192
 #define RESP_SIZE 16384  // 响应缓冲区大小
 #define SCRIPTS_DIR "/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
-#define TOKEN_PATH "/Users/def/.moho_ipc_token"
-#define TOKEN_LEN 32
+#define TOKEN_SERVICE_URL "http://127.0.0.1:9527/token/verify"
+#define HTTP_BUF_SIZE 4096
 
 static lua_State *g_L = NULL;
 static char g_response[RESP_SIZE];  // 存储响应
@@ -56,9 +59,9 @@ static CFRunLoopSourceRef g_client_source = NULL;
 static int g_call_count = 0;
 static int g_error_count = 0;
 
-// Token 验证
-static char g_token[TOKEN_LEN + 1] = {0};
-static volatile int g_authenticated = 0;  // 0=未验证, 1=已验证
+// Token 验证（通过 HTTP 服务）
+static int g_authenticated = 0;  // 0=未验证, 1=已验证
+static int g_current_client_fd = -1;  // 当前验证的客户端 fd
 
 // 日志
 static void log_msg(const char *fmt, ...) {
@@ -73,38 +76,80 @@ static void log_msg(const char *fmt, ...) {
     }
 }
 
-// 生成随机 token
-static void generate_token(void) {
-    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    FILE *urandom = fopen("/dev/urandom", "rb");
-    if (urandom) {
-        unsigned char buf[TOKEN_LEN];
-        if (fread(buf, 1, TOKEN_LEN, urandom) == TOKEN_LEN) {
-            for (int i = 0; i < TOKEN_LEN; i++) {
-                g_token[i] = charset[buf[i] % (sizeof(charset) - 1)];
-            }
-            g_token[TOKEN_LEN] = 0;
-        }
-        fclose(urandom);
-    } else {
-        // fallback: 使用时间戳
-        snprintf(g_token, sizeof(g_token), "%ld%ld", (long)time(NULL), (long)clock());
-    }
-}
-
-// 保存 token 到文件
-static int save_token(void) {
-    FILE *f = fopen(TOKEN_PATH, "w");
-    if (!f) {
-        log_msg("✗ 无法保存 token: %s\n", TOKEN_PATH);
+// HTTP Token 验证（通过 Token 服务）
+static int verify_token_via_http(const char *token) {
+    int sock;
+    struct sockaddr_in addr;
+    char request[HTTP_BUF_SIZE];
+    char response[HTTP_BUF_SIZE];
+    ssize_t len;
+    
+    // 创建 socket
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        log_msg("✗ HTTP socket 创建失败\n");
         return 0;
     }
-    fprintf(f, "%s", g_token);
-    fclose(f);
-    // 设置权限：仅所有者可读
-    chmod(TOKEN_PATH, 0600);
-    log_msg("✓ Token 已保存: %s\n", TOKEN_PATH);
-    return 1;
+    
+    // 设置超时
+    struct timeval timeout = {.tv_sec = 5, .tv_usec = 0};
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    
+    // 连接到 Token 服务（127.0.0.1:9527）
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(9527);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        log_msg("✗ Token 服务连接失败: 127.0.0.1:9527\n");
+        close(sock);
+        return 0;
+    }
+    
+    // 构造 HTTP POST 请求
+    char body[512];
+    snprintf(body, sizeof(body), "{\"token\":\"%s\"}", token);
+    
+    snprintf(request, sizeof(request),
+        "POST /token/verify HTTP/1.1\r\n"
+        "Host: 127.0.0.1:9527\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %zu\r\n"
+        "\r\n"
+        "%s",
+        strlen(body), body);
+    
+    // 调试：打印发送的请求
+    log_msg("HTTP 请求体: %s\n", body);
+    
+    // 发送请求
+    if (send(sock, request, strlen(request), 0) < 0) {
+        log_msg("✗ HTTP 请求发送失败\n");
+        close(sock);
+        return 0;
+    }
+    
+    // 接收响应
+    len = recv(sock, response, sizeof(response) - 1, 0);
+    close(sock);
+    
+    if (len <= 0) {
+        log_msg("✗ HTTP 响应为空\n");
+        return 0;
+    }
+    response[len] = 0;
+    
+    // 解析 JSON 响应（简单字符串匹配）
+    // 响应格式: {..."valid":true...} 或 {..."valid":false...}
+    if (strstr(response, "\"valid\":true")) {
+        log_msg("✓ Token 验证成功 (HTTP)\n");
+        return 1;
+    }
+    
+    log_msg("✗ Token 验证失败 (HTTP)\n");
+    return 0;
 }
 
 // 验证 token 命令
@@ -113,13 +158,24 @@ static int verify_token(const char *cmd) {
     if (strncmp(cmd, "auth ", 5) != 0) {
         return 0;  // 不是 auth 命令
     }
-    const char *provided = cmd + 5;
-    if (strlen(provided) >= TOKEN_LEN && strncmp(provided, g_token, TOKEN_LEN) == 0) {
+    
+    // 只提取 auth 行（去掉换行后的内容）
+    const char *start = cmd + 5;
+    const char *end = strchr(start, '\n');
+    char token[128] = {0};
+    if (end) {
+        size_t len = end - start;
+        if (len >= sizeof(token)) len = sizeof(token) - 1;
+        strncpy(token, start, len);
+    } else {
+        strncpy(token, start, sizeof(token) - 1);
+    }
+    
+    // 通过 HTTP Token 服务验证
+    if (verify_token_via_http(token)) {
         g_authenticated = 1;
-        log_msg("✓ Token 验证成功\n");
         return 1;  // 验证成功
     }
-    log_msg("✗ Token 验证失败\n");
     return -1;  // 验证失败
 }
 
@@ -187,6 +243,14 @@ static void client_callback(CFSocketRef s, CFSocketCallBackType type,
 
         const char *response;
 
+        // 检查是否是当前验证的客户端
+        if (fd != g_current_client_fd) {
+            // 新客户端，重置验证状态
+            g_authenticated = 0;
+            g_current_client_fd = fd;
+            log_msg("新客户端 fd=%d，验证状态重置\n", fd);
+        }
+
         // Token 验证检查
         if (!g_authenticated) {
             int verify_result = verify_token(buf);
@@ -210,7 +274,10 @@ static void client_callback(CFSocketRef s, CFSocketCallBackType type,
     } else if (n == 0 || (n < 0 && errno != EAGAIN)) {
         log_msg("客户端断开\n");
         // 断开时重置验证状态
-        g_authenticated = 0;
+        if (fd == g_current_client_fd) {
+            g_authenticated = 0;
+            g_current_client_fd = -1;
+        }
         if (g_client_socket) {
             CFSocketInvalidate(g_client_socket);
             CFRelease(g_client_socket);
@@ -281,14 +348,21 @@ static int l_start(lua_State *L) {
         return 2;
     }
 
-    // 生成并保存 token
-    generate_token();
-    if (!save_token()) {
-        lua_pushboolean(L, 0);
-        lua_pushstring(L, "save token failed");
-        return 2;
+    // 检查 Token 服务是否可用
+    int test_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (test_sock >= 0) {
+        struct sockaddr_in test_addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(9527),
+            .sin_addr.s_addr = inet_addr("127.0.0.1")
+        };
+        if (connect(test_sock, (struct sockaddr*)&test_addr, sizeof(test_addr)) < 0) {
+            log_msg("⚠ Token 服务未启动，请先运行: node server.js\n");
+        } else {
+            log_msg("✓ Token 服务可用: 127.0.0.1:9527\n");
+        }
+        close(test_sock);
     }
-    log_msg("✓ Token: %.8s...\n", g_token);
 
     unlink(SOCKET_PATH);
 

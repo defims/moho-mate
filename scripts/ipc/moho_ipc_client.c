@@ -5,6 +5,11 @@
  *   moho_ipc_cmd "***"
  *   moho_ipc_cmd -f script.lua
  *   moho_ipc_cmd --status
+ *
+ * Token 刷新机制:
+ *   - 首次使用文件 token (~/.moho_ipc_token)
+ *   - 过期时自动调用 HTTP /token/create 获取新 token
+ *   - 新 token 写入文件供下次使用
  */
 
 #include <stdio.h>
@@ -16,11 +21,102 @@
 #include <sys/stat.h>
 #include <libgen.h>
 #include <errno.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <time.h>
 
 #define SOCKET_PATH "/tmp/moho_ipc.sock"
 #define CMD_DIR "/tmp/moho_ipc_cmds"
 #define RECV_BUF_SIZE 16384
-#define TOKEN_PATH "/Users/def/.moho_ipc_token"
+#define TOKEN_SERVICE_HOST "127.0.0.1"
+#define TOKEN_SERVICE_PORT 9527
+#define HTTP_BUF_SIZE 4096
+#define CLIENT_ID "moho_ipc_client"
+
+// ========== HTTP Token 服务 ========== 
+
+// 从 HTTP 服务获取新 token
+static int fetch_new_token(char *token_out, size_t token_size) {
+    int sock;
+    struct sockaddr_in addr;
+    char request[HTTP_BUF_SIZE];
+    char response[HTTP_BUF_SIZE];
+    ssize_t len;
+    
+    // 创建 socket
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return 0;
+    }
+    
+    // 设置超时
+    struct timeval timeout = {.tv_sec = 5, .tv_usec = 0};
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    
+    // 连接 Token 服务
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(TOKEN_SERVICE_PORT);
+    addr.sin_addr.s_addr = inet_addr(TOKEN_SERVICE_HOST);
+    
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return 0;
+    }
+    
+    // 构造 HTTP POST 请求
+    char body[256];
+    snprintf(body, sizeof(body), "{\"client_id\":\"%s\",\"user\":\"%s\"}", CLIENT_ID, getenv("USER") ?: "unknown");
+    
+    snprintf(request, sizeof(request),
+        "POST /token/create HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %zu\r\n"
+        "\r\n"
+        "%s",
+        TOKEN_SERVICE_HOST, TOKEN_SERVICE_PORT, strlen(body), body);
+    
+    // 发送请求
+    if (send(sock, request, strlen(request), 0) < 0) {
+        close(sock);
+        return 0;
+    }
+    
+    // 接收响应
+    len = recv(sock, response, sizeof(response) - 1, 0);
+    close(sock);
+    
+    if (len <= 0) {
+        return 0;
+    }
+    response[len] = 0;
+    
+    // 解析 JSON: {"token":"xxx",...}
+    // 简单字符串匹配
+    char *token_start = strstr(response, "\"token\":\"");
+    if (!token_start) {
+        return 0;
+    }
+    token_start += 9;  // 跳过 "token":"
+    
+    char *token_end = strchr(token_start, '"');
+    if (!token_end) {
+        return 0;
+    }
+    
+    size_t token_len = token_end - token_start;
+    if (token_len >= token_size) {
+        token_len = token_size - 1;
+    }
+    strncpy(token_out, token_start, token_len);
+    token_out[token_len] = 0;
+    
+    return 1;
+}
+
+// ========== IPC 命令发送 ==========
 
 static int send_command(const char *cmd, int silent) {
     int sock;
@@ -54,17 +150,11 @@ static int send_command(const char *cmd, int silent) {
         return 1;
     }
 
-    // 读取 token
-    FILE *tf = fopen(TOKEN_PATH, "r");
-    if (tf) {
-        if (fgets(token, sizeof(token), tf) != NULL) {
-            // 去除尾部换行
-            size_t len = strlen(token);
-            while (len > 0 && (token[len-1] == '\n' || token[len-1] == '\r')) {
-                token[--len] = 0;
-            }
-        }
-        fclose(tf);
+    // 直接从 HTTP 服务获取 token（不读文件）
+    if (!fetch_new_token(token, sizeof(token))) {
+        if (!silent) fprintf(stderr, "✗ Token 获取失败（Token 服务未运行？）\n");
+        close(sock);
+        return 1;
     }
 
     // 发送 auth 命令
@@ -86,13 +176,7 @@ static int send_command(const char *cmd, int silent) {
 
     // 检查 auth 结果
     if (strncmp(response, "ok|authenticated", 16) != 0) {
-        if (!silent) {
-            if (strncmp(response, "error|", 6) == 0) {
-                fprintf(stderr, "✗ Token 验证失败: %s\n", response + 6);
-            } else {
-                fprintf(stderr, "✗ Token 验证失败: %s\n", response);
-            }
-        }
+        if (!silent) fprintf(stderr, "✗ Token 验证失败: %s\n", response);
         close(sock);
         return 1;
     }

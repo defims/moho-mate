@@ -1,8 +1,8 @@
 ---
 name: moho-mate
-description: Moho 动画软件命令行自动化工具。触发词:moho-mate、Moho 渲染、Moho 脚本、无头渲染、Lua 脚本执行、Moho IPC。
+description: Moho 动画软件命令行自动化工具。触发词:moho-mate、Moho 渲染、Moho 脚本、Lua 脚本执行、Moho IPC。
 moho_version: Moho Pro 14.3
-skill_version: 2026.05.26-v14.0
+skill_version: 2026.05.30-v15.0
 ---
 
 # Moho Mate
@@ -64,7 +64,44 @@ moho-mate config backup
 moho-mate config restore
 ```
 
-### ⚠️ 无头渲染 GIF/视频编码
+### ⚠️ Token 认证服务
+
+**IPC 需要 Token 认证**，Token 服务运行在 `127.0.0.1:9527`。
+
+**启动 Token 服务**：
+```bash
+node /Users/def/.openclaw/workspace/skills/moho-mate/scripts/token-service/server.js
+```
+
+**Token 有效期机制**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `TOKEN_EXPIRE` | 3600 秒 (1小时) | Token 有效期 |
+| 清理周期 | 60 秒 | 自动清理过期 token |
+
+**客户端行为**：
+
+| 客户端 | Token 获取 | 说明 |
+|--------|-----------|------|
+| `moho-mate-call` | 每次调用 `/token/create` | 不缓存，每次获取新 token |
+| `moho_ipc_client` | 每次调用 `/token/create` | 不缓存，不写文件 |
+
+**⚠️ 安全设计**：
+- Token **不写入文件**，避免被其他进程读取
+- 每次连接从 HTTP 服务获取新 Token
+- Token 服务仅绑定 `127.0.0.1`（本机）
+
+**修改有效期**：
+```bash
+# 启动时设置环境变量
+MOHO_TOKEN_EXPIRE=28800 node server.js  # 8 小时
+
+# 或创建时指定（仅 moho-mate-call 支持）
+# C 客户端使用默认值
+```
+
+### encode 视频编码
 
 **GIF**: 使用 libavfilter palettegen/paletteuse 滤镜优化调色板（已整合到 moho_ipc.so）
 
@@ -443,7 +480,7 @@ moho-mate call 'moho:FileSave()'      # 保存
 moho-mate call 'moho:FileRender("/tmp/out.png")'  # IPC 渲染
 moho-mate quit                        # 退出
 
-# 无头渲染
+# IPC 渲染
 moho-mate render project.moho -f PNG -o /tmp/output
 moho-mate render project.moho --start 1 --end 72
 
@@ -461,7 +498,7 @@ moho-mate inspect project.moho
 | `call '<lua>'` | 发送 Lua 命令 |
 | `call -f script.lua` | 发送脚本文件 |
 | `quit` | 退出 Moho |
-| `render <project> [options]` | 无头渲染 |
+| `render <project> [options]` | IPC 渲染 |
 | `draw <shape> [output]` | 绘制形状 |
 | `inspect <project>` | 查看项目信息 |
 | `config list/backup/restore` | 配置管理 |
@@ -560,7 +597,7 @@ moho-mate render project.moho -f MP4 --start 0 --end 72 -o /tmp/output
 | `--start/--end <frame>` | 帧范围 | 项目设置 |
 | `-halfsize yes` | 半尺寸预览 | no |
 
-⚠️ **视频格式崩溃 Bug（Moho 14.3）**：无头渲染 MP4/QT/GIF 会 SIGSEGV 崩溃。
+⚠️ **视频格式（MP4/QT/GIF）**：通过 IPC + FFmpeg 编码实现。
 
 ```bash
 # ✅ 正确：PNG 序列
