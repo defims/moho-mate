@@ -24,22 +24,9 @@ function MohoScript(moho)
 
     log("=== IPC 服务启动 ===")
 
-    -- 加载 IPC 模块
-    -- 优先从可执行文件加载（统一版），其次从 .so 加载
+    -- 加载 IPC 模块（统一版：从可执行文件加载）
     local exe_path = IPC_DIR .. "/moho-mate"
-    local ipc_so = IPC_DIR .. "/moho_ipc.so"
-    
-    -- 检查可执行文件是否存在
-    local f = io.open(exe_path, "r")
-    if f then
-        f:close()
-        log("尝试从可执行文件加载: " .. exe_path)
-        package.cpath = exe_path .. ";" .. package.cpath
-    else
-        log("尝试从 .so 加载: " .. ipc_so)
-        package.cpath = ipc_so .. ";" .. package.cpath
-    end
-    
+    package.cpath = exe_path .. ";" .. package.cpath
     package.loaded["moho_ipc"] = nil
 
     local ok, ipc = pcall(require, "moho_ipc")
@@ -47,7 +34,7 @@ function MohoScript(moho)
         log("✗ 模块加载失败: " .. tostring(ipc))
         return
     end
-    log("✓ IPC 模块已加载")
+    log("✓ IPC 模块已加载: " .. exe_path)
 
     -- ===== Helper 管理 =====
     local ipc_helper = nil
