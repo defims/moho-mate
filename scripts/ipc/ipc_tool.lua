@@ -4,7 +4,7 @@
 
 local VERSION = "1.0.0"
 
--- 变量由 wrapper.lua 设置，或使用默认值
+-- 变量由 moho-mate start 命令设置
 IPC_DIR = IPC_DIR or "$IPC_DIR"
 USER_PROJECT = USER_PROJECT or "$USER_PROJECT"
 USER_SCRIPT = USER_SCRIPT or "$USER_SCRIPT"
