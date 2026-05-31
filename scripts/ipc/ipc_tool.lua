@@ -27,30 +27,12 @@ local function log_clear()
     if f then f:close() end
 end
 
--- ===== Moho Helper =====
-local ipc_helper = nil
-
-local function get_moho()
-    if not ipc_helper then
-        ipc_helper = MOHO.ScriptInterfaceHelper:new_local()
-    end
-    return ipc_helper:MohoObject()
-end
-
-local function release_helper()
-    if ipc_helper then
-        ipc_helper:delete()
-        ipc_helper = nil
-    end
-end
-
 -- ===== IPC 命令执行 (C 实现) =====
 -- execute_via_helper 在 moho_ipc.c 中直接实现
 
 _G.ipc_quit = function()
     log("[IPC] quit")
     ipc.stop()
-    release_helper()
     moho:Quit()
 end
 
