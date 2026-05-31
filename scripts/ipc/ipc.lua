@@ -29,7 +29,7 @@ end
 
 -- ===== IPC 命令执行 (C 实现) =====
 -- execute_via_helper 在 moho_ipc.c 中直接实现
--- ipc.quit() 在 moho_ipc.c 中直接实现
+-- moho_ipc.quit() 在 moho_ipc.c 中直接实现
 
 -- ===== 主入口 =====
 function MohoScript(moho)
@@ -46,11 +46,11 @@ function MohoScript(moho)
         log("✗ 模块加载失败: " .. tostring(ipc_module))
         return
     end
-    _G.ipc = ipc_module  -- 设置全局 ipc
+    _G.moho_ipc = ipc_module  -- 设置全局 moho_ipc
     log("✓ 模块已加载: " .. exe_path)
 
     -- 启动 socket
-    local running, path = ipc.start()
+    local running, path = moho_ipc.start()
     if not running then
         log("✗ IPC 启动失败")
         return

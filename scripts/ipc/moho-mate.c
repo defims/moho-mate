@@ -389,7 +389,7 @@ static int cmd_start(int argc, char **argv) {
         if (ipc_check_running()) {
             printf("✓ IPC 服务已启动\n");
             printf("\n发送命令: moho-mate call '<lua>'\n");
-            printf("关闭 Moho: moho-mate call 'ipc.quit()'\n");
+            printf("关闭 Moho: moho-mate call 'moho_ipc.quit()'\n");
             return 0;
         }
     }
@@ -447,7 +447,7 @@ static int cmd_quit(void) {
         return 0;
     }
     printf("▶ 退出 Moho\n");
-    int ret = ipc_send("ipc.quit()");
+    int ret = ipc_send("moho_ipc.quit()");
     
     // 等待 socket 断开（最多 10 秒）
     for (int i = 0; i < 10; i++) {
