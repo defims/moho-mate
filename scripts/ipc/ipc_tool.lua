@@ -135,15 +135,13 @@ function MohoScript(moho)
         moho:FileNew()
     end
 
-    -- 保存 moho 引用
-    _G._ipc_moho = moho
+    -- 设置全局 moho 引用
     _G.moho = moho
     log("✓ moho 已更新 (document=" .. (moho.document and "存在" or "nil") .. ")")
 
     -- 执行用户脚本
     if USER_SCRIPT and USER_SCRIPT ~= "" then
         log("[2] 脚本: " .. USER_SCRIPT)
-        _G.moho = moho
         local ok, err = pcall(dofile, USER_SCRIPT)
         if not ok then
             log("✗ 脚本错误: " .. tostring(err))
