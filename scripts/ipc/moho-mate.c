@@ -31,7 +31,7 @@
 #define MOHO_APP "/Applications/Moho.app"
 #define IPC_SOCKET "/tmp/moho_ipc.sock"
 #define IPC_CMD_DIR "/tmp/moho_ipc_cmds"
-#define IPC_TOOL "/Users/def/.openclaw/workspace/skills/moho-mate/scripts/ipc/ipc.lua"
+#define IPC_TOOL "/Users/def/.openclaw/workspace/skills/moho-mate/scripts/ipc/moho_ipc.lua"
 #define MOHO_CONFIG_DIR "/Users/def/Library/Preferences/Lost Marble/Moho Pro/14"
 #define SCRIPTS_DIR "/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
 #define IPC_CONFIG_BACKUP "/tmp/moho_ipc_config_backup"
