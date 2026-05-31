@@ -287,7 +287,7 @@ static int ipc_send_file(const char *filepath) {
 }
 
 static int ipc_send_multiline(const char *code) {
-    // 使用固定临时文件名，避免竞争条件
+    // 固定文件名，每次覆盖写入（moho-mate 单线程顺序执行）
     mkdir(IPC_CMD_DIR, 0755);
     
     const char *tmpfile = IPC_CMD_DIR "/cmd.lua";
@@ -300,14 +300,7 @@ static int ipc_send_multiline(const char *code) {
     fprintf(f, "%s", code);
     fclose(f);
     
-    // 发送 dofile 命令
-    int ret = ipc_send_file(tmpfile);
-    
-    // 延迟删除，确保服务端已读取
-    usleep(500000);  // 500ms
-    unlink(tmpfile);
-    
-    return ret;
+    return ipc_send_file(tmpfile);
 }
 
 static int ipc_check_running(void) {
