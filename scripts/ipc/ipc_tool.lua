@@ -49,38 +49,6 @@ function MohoScript(moho)
     end
     log("✓ IPC 模块已加载")
 
-    -- ===== 检查 Moho 原生播放状态 =====
-    -- 不 Hook IsPlaying，直接提供独立函数
-    _G.ipc_is_moho_playing = function()
-        -- 方案1：尝试调用 moho:IsPlaying()
-        local ok, result = pcall(function()
-            return moho:IsPlaying()
-        end)
-        if ok then
-            return result == true
-        end
-        -- 方案2：检查 moho.document 的播放状态
-        local doc = moho.document
-        if doc then
-            -- Moho 文档可能有播放帧范围设置
-            -- 暂时返回 false，依赖 IPC playback 状态
-        end
-        return false
-    end
-    
-    _G.ipc_can_start_playback = function()
-        -- 检查 Moho 原生是否在播放
-        local moho_playing = ipc_is_moho_playing()
-        if moho_playing then
-            return false, "Moho 正在播放，请先停止"
-        end
-        -- 检查 IPC 是否已在播放
-        if ipc.is_playing() then
-            return false, "IPC playback 已在运行"
-        end
-        return true, "ok"
-    end
-
     -- ===== Helper 管理 =====
     local ipc_helper = nil
     
@@ -92,39 +60,14 @@ function MohoScript(moho)
         return ipc_helper:MohoObject()
     end
     
-    -- 释放 helper（仅在播放结束时调用）
+    -- 释放 helper（退出时调用）
     local function release_helper()
         if ipc_helper then
             ipc_helper:delete()
             ipc_helper = nil
         end
     end
-    
-    -- ===== 播放帧回调 =====
-    -- 方案 3：tick 机制 - 由 Moho Idle 回调触发
-    _G.ipc_play_frame = function(frame)
-        local moho_obj = get_moho()
-        if moho_obj then
-            moho_obj:SetCurFrame(frame, false, false)  -- updateUI=false, boneDynamics=false
-        end
-    end
-    
-    -- ===== Idle 回调（Moho 每帧渲染时调用）=====
-    _G.ipc_idle = function()
-        local ipc = require('moho_ipc')
-        if ipc.is_playing() then
-            ipc.tick()  -- 触发帧更新
-        end
-    end
-    
-    -- ===== 播放事件回调 =====
-    _G.ipc_play_event = function(event)
-        -- 静默处理，减少日志输出
-        if event == "complete" or event == "stop" then
-            release_helper()
-        end
-    end
-    
+
     -- ===== IPC 命令执行 =====
     _G.ipc_execute = function(cmd)
         log("[IPC] 执行: " .. string.sub(cmd, 1, 60))
@@ -227,13 +170,6 @@ function MohoScript(moho)
     log("=== IPC 运行中 ===")
     log("Socket: /tmp/moho_ipc.sock")
     log("超时: " .. IPC_TIMEOUT .. "s")
-    log("")
-    log("播放命令 (使用 moho-mate CLI):")
-    log("  moho-mate playback play 0 72 24   -- 播放")
-    log("  moho-mate playback pause          -- 暂停/恢复")
-    log("  moho-mate playback stop           -- 停止")
-    log("  moho-mate playback seek 36        -- 跳转")
-    log("  moho-mate playback status         -- 查看状态")
 end
 
 function LayerScript(moho) end
