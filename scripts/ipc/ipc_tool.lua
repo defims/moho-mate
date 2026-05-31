@@ -68,8 +68,6 @@ function MohoScript(moho)
         
         -- 更新全局引用
         _G.moho = moho_obj
-        _G.MOHO = MOHO
-        _G.LM = LM
         
         -- 捕获输出
         local output_buffer = {}
