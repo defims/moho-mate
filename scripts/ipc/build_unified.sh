@@ -47,14 +47,7 @@ for f in "${LUA_FILES[@]}"; do
 done
 
 echo ""
-echo "=== 编译 moho_ipc.c ==="
-gcc -c -O2 \
-    -I"$LUA_SRC" \
-    -I"$FFMPEG_SRC" \
-    -o moho_ipc.o "$IPC_DIR/moho_ipc.c"
-
-echo ""
-echo "=== 编译 moho-mate.c ==="
+echo "=== 编译 moho-mate.c（统一版）==="
 gcc -c -O2 \
     -I"$LUA_SRC" \
     -I"$FFMPEG_SRC" \
@@ -63,7 +56,7 @@ gcc -c -O2 \
 echo ""
 echo "=== 链接统一版 moho-mate ==="
 # 关键：-Wl,-export_dynamic 让 luaopen_moho_ipc 符号可被 dlopen 加载
-gcc -o "$OUTPUT" moho_ipc.o moho_mate.o $OBJS \
+gcc -o "$OUTPUT" moho_mate.o $OBJS \
     -framework CoreFoundation \
     -lcurl \
     -L"$MOHO_FRAMEWORKS" \
