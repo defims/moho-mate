@@ -545,7 +545,7 @@ static int cmd_encode(int argc, char **argv) {
     auto_start_ipc();
     
     // 发送编码命令
-    char lua_cmd[1024];
+    char lua_cmd[CMD_SIZE];
     snprintf(lua_cmd, sizeof(lua_cmd),
         "local ipc = require('moho_ipc')\n"
         "local ok, err = ipc.encode_video(\"%s\", \"%s\", %d, %d, \"mpeg4\")\n"
@@ -621,7 +621,7 @@ static int cmd_render(int argc, char **argv) {
     ipc_send(open_cmd);
     
     // 渲染命令
-    char lua_cmd[1024];
+    char lua_cmd[CMD_SIZE];
     char output_path[512];
     
     if (output) {
