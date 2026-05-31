@@ -287,12 +287,27 @@ static int ipc_send_file(const char *filepath) {
 }
 
 static int ipc_send_multiline(const char *code) {
-    // 直接发送 Lua 代码，不使用临时文件
-    // 多行代码用 --[[ ]] 包裹，避免解析问题
-    char wrapped_cmd[CMD_SIZE];
-    snprintf(wrapped_cmd, sizeof(wrapped_cmd), "%s", code);
+    // 使用固定临时文件名，避免竞争条件
+    mkdir(IPC_CMD_DIR, 0755);
     
-    return ipc_send_raw(wrapped_cmd);
+    const char *tmpfile = IPC_CMD_DIR "/cmd.lua";
+    
+    FILE *f = fopen(tmpfile, "w");
+    if (!f) {
+        fprintf(stderr, "✗ 无法写入临时文件\n");
+        return 1;
+    }
+    fprintf(f, "%s", code);
+    fclose(f);
+    
+    // 发送 dofile 命令
+    int ret = ipc_send_file(tmpfile);
+    
+    // 延迟删除，确保服务端已读取
+    usleep(500000);  // 500ms
+    unlink(tmpfile);
+    
+    return ret;
 }
 
 static int ipc_check_running(void) {
