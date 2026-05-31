@@ -519,15 +519,27 @@ moho-mate inspect project.moho
 # MP4 编码（使用 Moho 内置 FFmpeg MPEG4 编码器）
 moho-mate encode "/tmp/frame_%05d.png" "/tmp/video.mp4"
 
-# GIF 编码（使用 Moho 内置 FFmpeg GIF 编码器）
+# GIF 编码（使用 Moho 内置 FFmpeg GIF 编码器 + 调色板优化）
 moho-mate encode "/tmp/frame_%05d.png" "/tmp/animation.gif"
+
+# APNG 编码（动画 PNG，支持透明通道，无损）
+moho-mate encode "/tmp/frame_%05d.png" "/tmp/animation.apng"
 ```
 
+**格式对比：**
+
+| 格式 | 特点 | 适用场景 |
+|------|------|----------|
+| GIF | 256 色调色板，文件小 | 简单动画、表情包 |
+| APNG | 24 位真彩色 + Alpha 透明，无损 | 高质量动画、UI 元素 |
+| MP4 | 有损压缩，文件最小 | 视频预览、分享 |
+
 **⚠️ 重要说明：**
-- MP4/GIF 都使用 Moho 内置的 FFmpeg 库，无需安装额外依赖
+- MP4/GIF/APNG 都使用 Moho 内置的 FFmpeg 库，无需安装额外依赖
 - 自动检测输入 PNG 分辨率
 - 编码在后台线程异步执行，不阻塞 Moho
-- GIF 使用 RGB8 (8-bit) 格式，编码器自动生成调色板
+- GIF 使用 palettegen/paletteuse 滤镜优化调色板（stats_mode=diff）
+- APNG 默认无限循环，支持完整 Alpha 透明通道
 
 **Lua API（异步编码）：**
 ```lua
@@ -560,10 +572,10 @@ ipc.encode_cancel()
 
 ### render 视频格式处理 ✨ NEW
 
-**视频格式（MP4/QT/MOV/GIF）自动使用 IPC 模式：**
+**动画格式（MP4/QT/MOV/GIF/APNG）自动使用 IPC 模式：**
 
 ```
-render -f MP4 → IPC 模式渲染 PNG → 内置 FFmpeg 异步编码 → 输出 MP4
+render -f MP4/GIF/APNG → IPC 模式渲染 PNG → 内置 FFmpeg 异步编码 → 输出动画文件
 ```
 
 **工作流程：**
@@ -586,6 +598,12 @@ render -f MP4 → IPC 模式渲染 PNG → 内置 FFmpeg 异步编码 → 输出
 ```bash
 # 视频格式自动使用 IPC 模式
 moho-mate render project.moho -f MP4 --start 0 --end 72 -o /tmp/output
+
+# GIF 动画
+moho-mate render project.moho -f GIF --start 0 --end 72 -o /tmp/output
+
+# APNG 动画（无损 + 透明）
+moho-mate render project.moho -f APNG --start 0 --end 72 -o /tmp/output
 ```
 
 ### render 参数

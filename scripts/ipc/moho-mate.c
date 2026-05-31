@@ -417,13 +417,17 @@ static int cmd_encode(int argc, char **argv) {
     
     if (!input || !output) {
         fprintf(stderr, "用法: moho-mate encode <input> <output> [--fps 24] [--crf 23]\n");
+        fprintf(stderr, "格式: .mp4, .gif, .apng\n");
         return 1;
     }
     
-    // 判断是否 GIF
+    // 判断输出格式
     int is_gif = (strstr(output, ".gif") != NULL);
+    int is_apng = (strstr(output, ".apng") != NULL);
     
-    if (is_gif) {
+    if (is_apng) {
+        printf("▶ 编码 APNG（动画 PNG，无损 + 透明）\n");
+    } else if (is_gif) {
         printf("▶ 编码 GIF（libavfilter 调色板优化）\n");
     } else {
         printf("▶ 编码 MP4（内置 FFmpeg）\n");
@@ -588,7 +592,7 @@ static int cmd_render(int argc, char **argv) {
     }
     
     if (!project) {
-        fprintf(stderr, "用法: moho-mate render <project.moho> [-f PNG|JPEG|MP4|GIF] [-o output]\n");
+        fprintf(stderr, "用法: moho-mate render <project.moho> [-f PNG|JPEG|MP4|GIF|APNG] [-o output]\n");
         return 1;
     }
     
@@ -597,10 +601,11 @@ static int cmd_render(int argc, char **argv) {
         return 1;
     }
     
-    int is_video = (strcmp(format, "MP4") == 0 || strcmp(format, "GIF") == 0 || strcmp(format, "QT") == 0);
+    int is_video = (strcmp(format, "MP4") == 0 || strcmp(format, "GIF") == 0 || strcmp(format, "APNG") == 0 || strcmp(format, "QT") == 0);
     
     if (is_video) {
-        printf("⚠️ 视频格式 (%s) 使用 IPC 模式：PNG 渲染 + 内置编码\n", format);
+        const char *format_name = strcmp(format, "APNG") == 0 ? "APNG（动画 PNG）" : format;
+        printf("▶ 渲染 + 编码: %s\n", format_name);
     }
     
     printf("▶ 渲染项目: %s\n", project);
@@ -678,7 +683,22 @@ static int cmd_render(int argc, char **argv) {
     // 视频格式：调用 encode 编码
     if (is_video) {
         printf("✓ PNG 序列已保存到: %s\n", png_dir);
-        printf("▶ 编码视频: %s\n", output_path);
+        
+        // 根据格式选择编码器
+        const char *codec = "mpeg4";
+        const char *format_lower = "mp4";
+        if (strcmp(format, "GIF") == 0) {
+            codec = "gif";
+            format_lower = "gif";
+        } else if (strcmp(format, "APNG") == 0) {
+            codec = "apng";
+            format_lower = "png";  // APNG 输出后缀是 .png
+        } else if (strcmp(format, "MP4") == 0) {
+            codec = "mpeg4";
+            format_lower = "mp4";
+        }
+        
+        printf("▶ 编码 %s: %s\n", format, output_path);
         
         char encode_cmd[1024];
         snprintf(encode_cmd, sizeof(encode_cmd),
@@ -686,13 +706,13 @@ static int cmd_render(int argc, char **argv) {
             "local input = \"%s/frame_%%05d.png\"\n"
             "local output = \"%s\"\n"
             "local fps = 24\n"
-            "local ok, err = ipc.encode_video(input, output, fps, 23, \"mpeg4\")\n"
+            "local ok, err = ipc.encode_video(input, output, fps, 23, \"%s\")\n"
             "if ok then\n"
-            "  print('✓ 视频编码完成: ' .. output)\n"
+            "  print('✓ 编码完成: ' .. output)\n"
             "else\n"
             "  print('✗ 编码失败: ' .. tostring(err))\n"
             "end",
-            png_dir, output_path);
+            png_dir, output_path, codec);
         
         ret = ipc_send_multiline(encode_cmd);
         

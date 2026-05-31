@@ -489,6 +489,11 @@ static volatile float g_encode_progress = 0.0f;
 static char g_encode_error[256] = {0};
 static pthread_t g_encode_thread = 0;
 
+// 前向声明
+static void* encode_apng_thread(void *arg);
+static void* encode_gif_thread(void *arg);
+static void* encode_mp4_thread(void *arg);
+
 // ========== Playback 状态 ==========
 static volatile int g_play_status = 0;  // 0=stopped, 1=playing, 2=paused
 static volatile int g_play_current_frame = 0;
@@ -497,6 +502,298 @@ static volatile int g_play_end_frame = 72;
 static volatile int g_play_fps = 24;
 static CFRunLoopTimerRef g_play_timer = NULL;
 static CFRunLoopSourceRef g_play_source = NULL;
+
+// APNG 编码(使用 FFmpeg APNG 编码器)
+// 输出标准 .png 后缀（APNG 是 PNG 的动画扩展）
+static void* encode_apng_thread(void *arg) {
+    AVFormatContext *fmt_ctx = NULL;
+    AVCodecContext *codec_ctx = NULL;
+    AVStream *stream = NULL;
+    const AVCodec *codec = NULL;
+    AVFrame *frame = NULL, *png_frame = NULL;
+    AVPacket *pkt = NULL, *png_pkt = NULL;
+    AVFormatContext *png_fmt = NULL;
+    AVCodecContext *png_codec = NULL;
+    const AVCodec *png_decoder = NULL;
+
+    int ret, frame_count = 0;
+    char png_path[512];
+    char output_path[512];
+    int input_width = 0, input_height = 0;
+
+    // APNG 输出标准 .png 后缀
+    strncpy(output_path, g_encode_output, sizeof(output_path) - 1);
+    size_t output_len = strlen(output_path);
+    if (output_len > 5 && strcmp(output_path + output_len - 5, ".apng") == 0) {
+        // 将 .apng 改为 .png
+        output_path[output_len - 5] = '.';
+        output_path[output_len - 4] = 'p';
+        output_path[output_len - 3] = 'n';
+        output_path[output_len - 2] = 'g';
+        output_path[output_len - 1] = '\0';
+        log_msg("[encode] APNG 输出改为标准后缀: %s\n", output_path);
+    }
+
+    log_msg("[encode] APNG 开始编码: %s -> %s\n", g_encode_input, output_path);
+
+    // === 第一步:读取第一帧获取分辨率 ===
+    snprintf(png_path, sizeof(png_path), g_encode_input, 0);
+    if (access(png_path, R_OK) != 0) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "找不到第一帧: %s", png_path);
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    png_fmt = NULL;
+    ret = avformat_open_input(&png_fmt, png_path, NULL, NULL);
+    if (ret < 0) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法读取第一帧");
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    avformat_find_stream_info(png_fmt, NULL);
+
+    int video_stream = -1;
+    for (unsigned int i = 0; i < png_fmt->nb_streams; i++) {
+        if (png_fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            video_stream = i;
+            break;
+        }
+    }
+
+    if (video_stream >= 0) {
+        AVCodecParameters *png_par = png_fmt->streams[video_stream]->codecpar;
+        input_width = png_par->width;
+        input_height = png_par->height;
+        log_msg("[encode] APNG 输入分辨率: %dx%d\n", input_width, input_height);
+    }
+    avformat_close_input(&png_fmt);
+
+    if (input_width <= 0 || input_height <= 0) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法检测输入分辨率");
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    // === 第二步:创建 APNG 编码器 ===
+    codec = avcodec_find_encoder(AV_CODEC_ID_APNG);
+    if (!codec) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "找不到 APNG 编码器");
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    ret = avformat_alloc_output_context2(&fmt_ctx, NULL, "apng", output_path);
+    if (ret < 0) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法创建输出上下文");
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    stream = avformat_new_stream(fmt_ctx, NULL);
+    if (!stream) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法创建流");
+        avformat_free_context(fmt_ctx);
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    codec_ctx = avcodec_alloc_context3(codec);
+    if (!codec_ctx) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法创建编码器上下文");
+        avformat_free_context(fmt_ctx);
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    codec_ctx->width = input_width;
+    codec_ctx->height = input_height;
+    codec_ctx->time_base = (AVRational){1, g_encode_fps};
+    codec_ctx->framerate = (AVRational){g_encode_fps, 1};
+    codec_ctx->pix_fmt = AV_PIX_FMT_RGBA;  // APNG 使用 RGBA
+    
+    // APNG 特定设置
+    // plays: 0 = 无限循环, 1+ = 播放次数
+    av_opt_set_int(codec_ctx, "plays", 0, 0);  // 无限循环
+
+    if (fmt_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
+        codec_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    }
+
+    ret = avcodec_open2(codec_ctx, codec, NULL);
+    if (ret < 0) {
+        char errbuf[128];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法打开 APNG 编码器: %s", errbuf);
+        log_msg("[encode] APNG 编码器打开失败: %s\n", g_encode_error);
+        avcodec_free_context(&codec_ctx);
+        avformat_free_context(fmt_ctx);
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    avcodec_parameters_from_context(stream->codecpar, codec_ctx);
+
+    if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+        ret = avio_open(&fmt_ctx->pb, output_path, AVIO_FLAG_WRITE);
+        if (ret < 0) {
+            snprintf(g_encode_error, sizeof(g_encode_error), "无法打开输出文件");
+            avcodec_free_context(&codec_ctx);
+            avformat_free_context(fmt_ctx);
+            g_encode_status = 3;
+            return NULL;
+        }
+    }
+
+    ret = avformat_write_header(fmt_ctx, NULL);
+    if (ret < 0) {
+        snprintf(g_encode_error, sizeof(g_encode_error), "无法写 APNG 文件头");
+        avcodec_free_context(&codec_ctx);
+        avformat_free_context(fmt_ctx);
+        g_encode_status = 3;
+        return NULL;
+    }
+
+    // === 第三步:读取 PNG 序列并编码 ===
+    pkt = av_packet_alloc();
+    frame = av_frame_alloc();  // 输出帧
+    png_frame = av_frame_alloc();  // 输入帧
+    
+    // 创建帧缓冲（APNG 需要 RGBA）
+    frame->format = AV_PIX_FMT_RGBA;
+    frame->width = input_width;
+    frame->height = input_height;
+    av_frame_get_buffer(frame, 0);
+    
+    // 创建图像转换上下文（PNG 可能不是 RGBA）
+    struct SwsContext *sws_ctx = NULL;
+    
+    int input_frame = 0;
+    
+    while (1) {
+        snprintf(png_path, sizeof(png_path), g_encode_input, input_frame);
+        
+        if (access(png_path, R_OK) != 0) {
+            break;  // 没有更多帧
+        }
+        
+        png_fmt = NULL;
+        ret = avformat_open_input(&png_fmt, png_path, NULL, NULL);
+        if (ret < 0) {
+            log_msg("[encode] 无法读取: %s\n", png_path);
+            input_frame++;
+            continue;
+        }
+        
+        avformat_find_stream_info(png_fmt, NULL);
+        
+        video_stream = -1;
+        for (unsigned int i = 0; i < png_fmt->nb_streams; i++) {
+            if (png_fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+                video_stream = i;
+                break;
+            }
+        }
+        
+        if (video_stream >= 0) {
+            AVCodecParameters *png_par = png_fmt->streams[video_stream]->codecpar;
+            png_decoder = avcodec_find_decoder(png_par->codec_id);
+            png_codec = avcodec_alloc_context3(png_decoder);
+            avcodec_parameters_to_context(png_codec, png_par);
+            avcodec_open2(png_codec, png_decoder, NULL);
+            
+            png_pkt = av_packet_alloc();
+            
+            while (av_read_frame(png_fmt, png_pkt) >= 0) {
+                if (png_pkt->stream_index == video_stream) {
+                    ret = avcodec_send_packet(png_codec, png_pkt);
+                    if (ret >= 0) {
+                        ret = avcodec_receive_frame(png_codec, png_frame);
+                        if (ret >= 0) {
+                            // 创建转换上下文（根据实际输入格式）
+                            if (!sws_ctx) {
+                                sws_ctx = sws_getContext(
+                                    png_frame->width, png_frame->height, png_frame->format,
+                                    input_width, input_height, AV_PIX_FMT_RGBA,
+                                    SWS_BILINEAR, NULL, NULL, NULL
+                                );
+                            }
+                            
+                            // 确保帧缓冲可写（关键！）
+                            ret = av_frame_make_writable(frame);
+                            if (ret < 0) {
+                                log_msg("[encode] 无法使帧可写\n");
+                                continue;
+                            }
+                            
+                            // 转换到 RGBA
+                            sws_scale(sws_ctx, png_frame->data, png_frame->linesize,
+                                     0, png_frame->height, frame->data, frame->linesize);
+                            
+                            // 设置帧属性
+                            frame->pts = input_frame;
+                            
+                            // 编码为 APNG 帧
+                            ret = avcodec_send_frame(codec_ctx, frame);
+                            if (ret >= 0) {
+                                while (avcodec_receive_packet(codec_ctx, pkt) >= 0) {
+                                    av_packet_rescale_ts(pkt, codec_ctx->time_base, stream->time_base);
+                                    pkt->stream_index = stream->index;
+                                    av_interleaved_write_frame(fmt_ctx, pkt);
+                                }
+                            }
+                        }
+                    }
+                }
+                av_packet_unref(png_pkt);
+            }
+            
+            av_packet_free(&png_pkt);
+            avcodec_free_context(&png_codec);
+        }
+        
+        avformat_close_input(&png_fmt);
+        input_frame++;
+        frame_count++;
+        g_encode_progress = (float)frame_count / (frame_count + 50.0f);
+    }
+    
+    // 清理转换上下文
+    if (sws_ctx) sws_freeContext(sws_ctx);
+    
+    // 刷新编码器
+    avcodec_send_frame(codec_ctx, NULL);
+    while (avcodec_receive_packet(codec_ctx, pkt) >= 0) {
+        av_packet_rescale_ts(pkt, codec_ctx->time_base, stream->time_base);
+        pkt->stream_index = stream->index;
+        av_interleaved_write_frame(fmt_ctx, pkt);
+    }
+    
+    av_write_trailer(fmt_ctx);
+    
+    log_msg("[encode] APNG 编码完成: %d 帧 -> %s\n", frame_count, output_path);
+    g_encode_status = 2;
+    g_encode_progress = 1.0f;
+
+    // 清理
+    if (pkt) av_packet_free(&pkt);
+    if (frame) av_frame_free(&frame);
+    if (png_frame) av_frame_free(&png_frame);
+    if (codec_ctx) avcodec_free_context(&codec_ctx);
+    if (fmt_ctx) {
+        if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+            avio_closep(&fmt_ctx->pb);
+        }
+        avformat_free_context(fmt_ctx);
+    }
+    
+    if (g_encode_status == 3) {
+        log_msg("[encode] APNG 编码失败: %s\n", g_encode_error);
+    }
+    
+    return NULL;
+}
 
 // GIF 编码(使用 Moho 内置 FFmpeg + libavfilter palettegen/paletteuse)
 static void* encode_gif_thread(void *arg) {
@@ -1148,9 +1445,26 @@ static int l_encode_video(lua_State *L) {
     // 检测输出格式
     size_t output_len = strlen(output);
     int is_gif = (output_len > 4 && strcmp(output + output_len - 4, ".gif") == 0);
+    // APNG: 检测 .apng（明确动画意图）或 .png（标准，需判断输入是否多帧）
+    int explicit_apng = (output_len > 5 && strcmp(output + output_len - 5, ".apng") == 0);
+    int is_png = (output_len > 4 && strcmp(output + output_len - 4, ".png") == 0);
+    
+    // 如果是 .png，检查输入是否是多帧序列（包含 % 格式化符）
+    int is_multi_frame = (strstr(input, "%") != NULL);
+    
+    // APNG 逻辑：
+    // 1. 用户指定 .apng → 明确要动画
+    // 2. 用户指定 .png + 多帧输入 → 自动切换到 APNG
+    int is_apng = explicit_apng || (is_png && is_multi_frame && !is_gif);
+    
+    // 如果输出是 .png 单帧，不需要编码（静态 PNG）
+    // 这种情况应该在 render 命令中处理，不调用 encode
 
     // 在后台线程启动编码
-    if (is_gif) {
+    if (is_apng) {
+        pthread_create(&g_encode_thread, NULL, encode_apng_thread, NULL);
+        log_msg("[encode] 启动 APNG 编码: %s -> %s\n", input, output);
+    } else if (is_gif) {
         pthread_create(&g_encode_thread, NULL, encode_gif_thread, NULL);
         log_msg("[encode] 启动 GIF 编码: %s -> %s\n", input, output);
     } else {
