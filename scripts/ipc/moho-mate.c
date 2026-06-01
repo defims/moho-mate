@@ -1166,6 +1166,15 @@ static const char* execute_via_helper(const char *cmd) {
     lua_pushcfunction(g_L, capture_print);
     lua_setglobal(g_L, "print");
     
+    // ⚠️ 临时设置全局 moho_ipc（执行完立即删除）
+    lua_getfield(g_L, LUA_REGISTRYINDEX, "_ipc_module");
+    if (lua_istable(g_L, -1)) {
+        lua_setglobal(g_L, "moho_ipc");  // 临时全局
+    } else {
+        lua_pop(g_L, 1);  // 移除无效值
+        log_msg("⚠️ _ipc_module not found in registry\n");
+    }
+    
     // 7. 执行命令
     log_msg("执行前栈大小: %d\n", lua_gettop(g_L));
     int ret = luaL_dostring(g_L, cmd);
@@ -1186,11 +1195,20 @@ static const char* execute_via_helper(const char *cmd) {
     lua_getglobal(g_L, "_original_print");
     lua_setglobal(g_L, "print");
     
+    // ⚠️ 立即删除临时全局 moho_ipc
+    lua_pushnil(g_L);
+    lua_setglobal(g_L, "moho_ipc");
+    
     if (ret != 0) {
         log_msg("✗ 执行错误: %s\n", lua_tostring(g_L, -1));
         const char *err = lua_tostring(g_L, -1);
         snprintf(g_response, RESP_SIZE, "error|%s", err ? err : "unknown");
+        
+        // ⚠️ 错误路径也要删除临时全局
         lua_pop(g_L, lua_gettop(g_L));
+        lua_pushnil(g_L);
+        lua_setglobal(g_L, "moho_ipc");
+        
         g_error_count++;
         return g_response;
     }
@@ -2705,7 +2723,27 @@ static const luaL_Reg funcs[] = {
 };
 
 int luaopen_moho_ipc(lua_State *L) {
-    luaL_newlib(L, funcs);
-    log_msg("模块加载 (ScriptInterfaceHelper 执行版)\n");
-    return 1;
+    // ⚠️ 检查是否已经加载（防止重复加载）
+    lua_getfield(L, LUA_REGISTRYINDEX, "_ipc_module");
+    if (lua_istable(L, -1)) {
+        log_msg("模块已存在，返回缓存\n");
+        return 1;  // 返回已存在的模块
+    }
+    lua_pop(L, 1);  // 移除 nil
+    
+    // 创建新模块 table
+    lua_newtable(L);
+    
+    // 注册函数
+    for (int i = 0; funcs[i].name; i++) {
+        lua_pushcfunction(L, funcs[i].func);
+        lua_setfield(L, -2, funcs[i].name);
+    }
+    
+    // 同时存到 registry（给 C 的 execute_via_helper 用）
+    lua_pushvalue(L, -1);  // 复制 table
+    lua_setfield(L, LUA_REGISTRYINDEX, "_ipc_module");
+    
+    log_msg("模块加载（隔离模式，不注册 package.loaded）\n");
+    return 1;  // 返回 table，但 Moho 不会自动注册
 }

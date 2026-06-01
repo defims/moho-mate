@@ -46,11 +46,18 @@ function MohoScript(moho)
         log("✗ 模块加载失败: " .. tostring(ipc_module))
         return
     end
-    _G.moho_ipc = ipc_module  -- 设置全局 moho_ipc
-    log("✓ 模块已加载: " .. exe_path)
+    
+    -- ⚠️ 立即从 package.loaded 删除（防止其他脚本 require）
+    package.loaded["moho_ipc"] = nil
+    log("✓ 模块已加载并隔离（package.loaded 已清除）: " .. exe_path)
+    
+    -- 存到 registry（给 C 的 execute_via_helper 用）
+    local registry = debug.getregistry()
+    registry._ipc_module = ipc_module
+    log("✓ 模块已存到 registry（隔离保护）")
 
-    -- 启动 socket
-    local running, path = moho_ipc.start()
+    -- 启动 socket（用局部变量）
+    local running, path = ipc_module.start()
     if not running then
         log("✗ IPC 启动失败")
         return
