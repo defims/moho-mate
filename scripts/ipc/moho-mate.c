@@ -1,5 +1,5 @@
 /*
- * moho-mate.c - Moho 命令行工具（统一版：CLI + Lua 模块）
+ * moho-mate.c - Moho 命令行工具(统一版:CLI + Lua 模块)
  *
  * 功能:
  *   1. 命令行工具: start, call, quit, status, render, encode
@@ -43,7 +43,7 @@
 // ========== macOS ==========
 #include <CoreFoundation/CoreFoundation.h>
 
-// ========== libcurl（已移除）==========
+// ========== libcurl(已移除)==========
 
 // ========== FFmpeg ==========
 #include <libavcodec/avcodec.h>
@@ -72,28 +72,28 @@
 #define OUTPUT_SIZE 16384
 #define HTTP_BUF_SIZE 4096
 
-// ========== 配置管理（IPC 自动备份/恢复） ==========
+// ========== 配置管理(IPC 自动备份/恢复) ==========
 
-// IPC 配置备份（启动前）
+// IPC 配置备份(启动前)
 static int ipc_config_backup(void) {
-    // 备份到固定目录（不区分 PID）
+    // 备份到固定目录(不区分 PID)
     char backup_dir[512];
     snprintf(backup_dir, sizeof(backup_dir), "%s", IPC_CONFIG_BACKUP);
-    
+
     // 清理旧备份
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" 2>/dev/null || true", backup_dir);
     system(cmd);
-    
+
     snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\"", backup_dir);
     system(cmd);
-    
+
     snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/ \"%s\"/", MOHO_CONFIG_DIR, backup_dir);
     int ret = system(cmd);
-    
+
     if (ret == 0) {
         printf("✓ 配置已备份: %s\n", backup_dir);
-        // 写入 PID 文件（标记 IPC 会话）
+        // 写入 PID 文件(标记 IPC 会话)
         FILE *f = fopen(IPC_BACKUP_PID_FILE, "w");
         if (f) {
             fprintf(f, "%d\n", getpid());
@@ -105,57 +105,57 @@ static int ipc_config_backup(void) {
     return ret;
 }
 
-// IPC 使用空配置（清空 autosave）
+// IPC 使用空配置(清空 autosave)
 static int ipc_config_use_empty(void) {
     char autosave_dir[512];
     snprintf(autosave_dir, sizeof(autosave_dir), "%s/Autosave", MOHO_CONFIG_DIR);
-    
+
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"/* 2>/dev/null || true", autosave_dir);
     system(cmd);
-    
+
     printf("✓ Autosave 已清空\n");
-    
+
     char template_path[512];
     snprintf(template_path, sizeof(template_path), "%s", EMPTY_CONFIG_TEMPLATE);
-    
+
     struct stat st;
     if (stat(template_path, &st) == 0 && S_ISDIR(st.st_mode)) {
         snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/ \"%s\"/", template_path, MOHO_CONFIG_DIR);
         system(cmd);
         printf("✓ 空配置模板已应用\n");
     }
-    
+
     return 0;
 }
 
-// IPC 配置恢复（退出后）
+// IPC 配置恢复(退出后)
 static int ipc_config_restore(void) {
     char backup_dir[512];
     snprintf(backup_dir, sizeof(backup_dir), "%s", IPC_CONFIG_BACKUP);
-    
-    // 检查 PID 文件（确认 IPC 会话）
+
+    // 检查 PID 文件(确认 IPC 会话)
     FILE *f = fopen(IPC_BACKUP_PID_FILE, "r");
     if (!f) {
-        printf("⚠ 无 IPC 会话标记，跳过恢复\n");
+        printf("⚠ 无 IPC 会话标记,跳过恢复\n");
         return 0;
     }
     fclose(f);
-    
+
     struct stat st;
     if (stat(backup_dir, &st) != 0) {
-        printf("⚠ 无配置备份，跳过恢复\n");
+        printf("⚠ 无配置备份,跳过恢复\n");
         unlink(IPC_BACKUP_PID_FILE);
         return 0;
     }
-    
+
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"/* 2>/dev/null || true", MOHO_CONFIG_DIR);
     system(cmd);
-    
+
     snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/ \"%s\"/", backup_dir, MOHO_CONFIG_DIR);
     int ret = system(cmd);
-    
+
     if (ret == 0) {
         printf("✓ 配置已恢复\n");
         snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", backup_dir);
@@ -177,27 +177,27 @@ static int ipc_send_raw(const char *cmd) {
         fprintf(stderr, "✗ Socket 创建失败\n");
         return 1;
     }
-    
+
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, IPC_SOCKET, sizeof(addr.sun_path) - 1);
-    
+
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         close(sock);
-        fprintf(stderr, "✗ IPC 连接失败（服务未启动？）\n");
+        fprintf(stderr, "✗ IPC 连接失败(服务未启动?)\n");
         return 1;
     }
-    
+
     // 发送命令
     send(sock, cmd, strlen(cmd), 0);
     send(sock, "\n", 1, 0);
-    
+
     // 接收响应
     char resp[1024];
     int n = recv(sock, resp, sizeof(resp) - 1, 0);
     close(sock);
-    
+
     if (n > 0) {
         resp[n] = 0;
         // 跳过开头的空白字符
@@ -206,7 +206,7 @@ static int ipc_send_raw(const char *cmd) {
         // 去除尾部换行
         int len = strlen(p);
         while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r')) p[--len] = 0;
-        
+
         if (strncmp(p, "ok|", 3) == 0) {
             printf("%s\n", p + 3);
             return 0;
@@ -215,7 +215,7 @@ static int ipc_send_raw(const char *cmd) {
             return 1;
         }
     }
-    
+
     return 0;
 }
 
@@ -230,11 +230,11 @@ static int ipc_send_file(const char *filepath) {
 }
 
 static int ipc_send_multiline(const char *code) {
-    // 固定文件名，每次覆盖写入（moho-mate 单线程顺序执行）
+    // 固定文件名,每次覆盖写入(moho-mate 单线程顺序执行)
     mkdir(IPC_CMD_DIR, 0755);
-    
+
     const char *tmpfile = IPC_CMD_DIR "/cmd.lua";
-    
+
     FILE *f = fopen(tmpfile, "w");
     if (!f) {
         fprintf(stderr, "✗ 无法写入临时文件\n");
@@ -242,7 +242,7 @@ static int ipc_send_multiline(const char *code) {
     }
     fprintf(f, "%s", code);
     fclose(f);
-    
+
     return ipc_send_file(tmpfile);
 }
 
@@ -253,34 +253,34 @@ static int ipc_check_running(void) {
 
 static int auto_start_ipc(void) {
     if (ipc_check_running()) return 0;
-    
-    printf("▶ IPC 未启动，自动启动...\n");
-    
+
+    printf("▶ IPC 未启动,自动启动...\n");
+
     // 启动 Moho IPC
     char moho_path[512];
     snprintf(moho_path, sizeof(moho_path), "%s/Contents/MacOS/Moho", MOHO_APP);
-    
+
     // 创建临时 wrapper
     mkdir(IPC_CMD_DIR, 0755);
     char wrapper_path[256];
     snprintf(wrapper_path, sizeof(wrapper_path), "%s/wrapper.lua", IPC_CMD_DIR);
-    
+
     FILE *f = fopen(wrapper_path, "w");
     if (!f) {
         fprintf(stderr, "✗ 无法创建 wrapper\n");
         return 1;
     }
-    
+
     // 写入 IPC 启动代码
     fprintf(f, "dofile(\"%s\")\n", IPC_TOOL);
     fclose(f);
-    
-    // 启动 Moho（用 open 命令）
+
+    // 启动 Moho(用 open 命令)
     char open_cmd[1024];
     snprintf(open_cmd, sizeof(open_cmd), "open -a Moho --args \"%s\"", wrapper_path);
     system(open_cmd);
     printf("Moho 已启动\n");
-    
+
     // 等待 socket
     for (int i = 0; i < 30; i++) {
         sleep(1);
@@ -290,7 +290,7 @@ static int auto_start_ipc(void) {
             return 0;
         }
     }
-    
+
     fprintf(stderr, "✗ IPC 启动超时\n");
     return 1;
 }
@@ -301,7 +301,7 @@ static int cmd_start(int argc, char **argv) {
     char *project = NULL;
     char *script = NULL;
     int timeout = 3600;
-    
+
     // 解析参数
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--timeout") == 0 || strcmp(argv[i], "-t") == 0) {
@@ -314,36 +314,36 @@ static int cmd_start(int argc, char **argv) {
             }
         }
     }
-    
+
     printf("▶ 启动 IPC 服务\n");
     printf("  超时: %d 秒\n", timeout);
     if (project) printf("  项目: %s\n", project);
     if (script) printf("  脚本: %s\n", script);
-    
+
     // 杀掉旧 Moho
     system("pkill -9 Moho 2>/dev/null || true");
     unlink(IPC_SOCKET);
     sleep(1);
-    
+
     // 备份配置 + 使用空配置
     ipc_config_backup();
     ipc_config_use_empty();
-    
+
     // 启动 Moho IPC
     char moho_path[512];
     snprintf(moho_path, sizeof(moho_path), "%s/Contents/MacOS/Moho", MOHO_APP);
-    
+
     mkdir(IPC_CMD_DIR, 0755);
     char wrapper_path[256];
     snprintf(wrapper_path, sizeof(wrapper_path), "%s/wrapper.lua", IPC_CMD_DIR);
-    
+
     FILE *f = fopen(wrapper_path, "w");
     if (!f) {
         fprintf(stderr, "✗ 无法创建 wrapper\n");
         return 1;
     }
-    
-    // 写入 IPC 启动代码（使用 ipc.lua 模板）
+
+    // 写入 IPC 启动代码(使用 ipc.lua 模板)
     // 设置变量供 ipc.lua 使用
     fprintf(f, "IPC_DIR = \"%s\"\n", SCRIPTS_DIR);
     fprintf(f, "USER_PROJECT = \"%s\"\n", project ? project : "");
@@ -351,13 +351,13 @@ static int cmd_start(int argc, char **argv) {
     fprintf(f, "IPC_TIMEOUT = %d\n", timeout);
     fprintf(f, "dofile(\"%s\")\n", IPC_TOOL);
     fclose(f);
-    
-    // 启动 Moho（用 open 命令）
+
+    // 启动 Moho(用 open 命令)
     char open_cmd[1024];
     snprintf(open_cmd, sizeof(open_cmd), "open -a Moho --args \"%s\"", wrapper_path);
     system(open_cmd);
     printf("Moho 已启动\n");
-    
+
     // 等待 socket
     printf("等待 IPC socket...\n");
     for (int i = 0; i < 30; i++) {
@@ -369,7 +369,7 @@ static int cmd_start(int argc, char **argv) {
             return 0;
         }
     }
-    
+
     fprintf(stderr, "✗ IPC socket 未创建\n");
     return 1;
 }
@@ -379,7 +379,7 @@ static int cmd_start(int argc, char **argv) {
 static int cmd_call(int argc, char **argv) {
     char *cmd = NULL;
     char *file = NULL;
-    
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--file") == 0) {
             if (i + 1 < argc) file = argv[++i];
@@ -387,7 +387,7 @@ static int cmd_call(int argc, char **argv) {
             if (!cmd) cmd = argv[i];
         }
     }
-    
+
     if (file) {
         if (access(file, R_OK) != 0) {
             fprintf(stderr, "✗ 文件不存在: %s\n", file);
@@ -397,14 +397,14 @@ static int cmd_call(int argc, char **argv) {
         printf("▶ 发送 Lua 文件: %s\n", file);
         return ipc_send_file(file);
     }
-    
+
     if (!cmd) {
         fprintf(stderr, "用法: moho-mate call '<lua>' 或 -f script.lua\n");
         return 1;
     }
-    
+
     auto_start_ipc();
-    
+
     // 判断是否多行
     if (strstr(cmd, "\n")) {
         return ipc_send_multiline(cmd);
@@ -418,14 +418,14 @@ static int cmd_call(int argc, char **argv) {
 static int cmd_quit(void) {
     if (!ipc_check_running()) {
         printf("Moho 未运行\n");
-        // 即使 Moho 未运行，也尝试恢复配置
+        // 即使 Moho 未运行,也尝试恢复配置
         ipc_config_restore();
         return 0;
     }
     printf("▶ 退出 Moho\n");
     int ret = ipc_send("moho_ipc.quit()");
-    
-    // 等待 socket 断开（最多 10 秒）
+
+    // 等待 socket 断开(最多 10 秒)
     for (int i = 0; i < 10; i++) {
         sleep(1);
         if (!ipc_check_running()) {
@@ -433,10 +433,10 @@ static int cmd_quit(void) {
             break;
         }
     }
-    
+
     // 恢复原有配置
     ipc_config_restore();
-    
+
     return ret;
 }
 
@@ -460,7 +460,7 @@ static int cmd_encode(int argc, char **argv) {
     char *output = NULL;
     int fps = 24;
     int crf = 23;
-    
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--fps") == 0 && i + 1 < argc) {
             fps = atoi(argv[++i]);
@@ -471,22 +471,22 @@ static int cmd_encode(int argc, char **argv) {
             else if (!output) output = argv[i];
         }
     }
-    
+
     if (!input || !output) {
         fprintf(stderr, "用法: moho-mate encode <input> <output> [--fps 24] [--crf 23]\n");
         fprintf(stderr, "格式: .mp4, .gif, .apng\n");
         return 1;
     }
-    
+
     // 判断输出格式
     int is_gif = (strstr(output, ".gif") != NULL);
     int is_apng = (strstr(output, ".apng") != NULL);
-    
-    // APNG 实际输出路径（标准后缀是 .png）
+
+    // APNG 实际输出路径(标准后缀是 .png)
     char actual_output[512];
     strncpy(actual_output, output, sizeof(actual_output) - 1);
     actual_output[sizeof(actual_output) - 1] = '\0';
-    
+
     if (is_apng) {
         // APNG 标准后缀是 .png
         size_t len = strlen(actual_output);
@@ -497,23 +497,23 @@ static int cmd_encode(int argc, char **argv) {
             actual_output[len - 2] = 'g';
             actual_output[len - 1] = '\0';
         }
-        printf("▶ 编码 APNG（动画 PNG，无损 + 透明）\n");
+        printf("▶ 编码 APNG(动画 PNG,无损 + 透明)\n");
     } else if (is_gif) {
-        printf("▶ 编码 GIF（libavfilter 调色板优化）\n");
+        printf("▶ 编码 GIF(libavfilter 调色板优化)\n");
     } else {
-        printf("▶ 编码 MP4（内置 FFmpeg）\n");
+        printf("▶ 编码 MP4(内置 FFmpeg)\n");
     }
     printf("  输入: %s\n", input);
     if (is_apng && strcmp(output, actual_output) != 0) {
-        printf("  输出: %s（APNG 使用标准 PNG 后缀）\n", actual_output);
+        printf("  输出: %s(APNG 使用标准 PNG 后缀)\n", actual_output);
     } else {
         printf("  输出: %s\n", output);
     }
     printf("  帧率: %d fps\n", fps);
-    
+
     auto_start_ipc();
-    
-    // 发送编码命令（同步等待完成）
+
+    // 发送编码命令(同步等待完成)
     char lua_cmd[CMD_SIZE];
     snprintf(lua_cmd, sizeof(lua_cmd),
         "local ipc = require('moho_ipc')\n"
@@ -541,7 +541,7 @@ static int cmd_encode(int argc, char **argv) {
         "  print('✗ 编码超时')\n"
         "end",
         input, output, fps, crf, actual_output);
-    
+
     return ipc_send_multiline(lua_cmd);
 }
 
@@ -556,7 +556,7 @@ static int cmd_render(int argc, char **argv) {
     char *output = NULL;
     int start_frame = 0;
     int end_frame = 72;
-    
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
             format = argv[++i];
@@ -580,41 +580,41 @@ static int cmd_render(int argc, char **argv) {
             if (!project) project = argv[i];
         }
     }
-    
+
     if (!project) {
         fprintf(stderr, "用法: moho-mate render <project.moho> [-f PNG|JPEG|MP4|GIF|APNG] [-o output]\n");
         return 1;
     }
-    
+
     if (access(project, R_OK) != 0) {
         fprintf(stderr, "✗ 项目不存在: %s\n", project);
         return 1;
     }
-    
+
     int is_video = (strcmp(format, "MP4") == 0 || strcmp(format, "GIF") == 0 || strcmp(format, "APNG") == 0 || strcmp(format, "QT") == 0);
-    
+
     if (is_video) {
-        const char *format_name = strcmp(format, "APNG") == 0 ? "APNG（动画 PNG）" : format;
+        const char *format_name = strcmp(format, "APNG") == 0 ? "APNG(动画 PNG)" : format;
         printf("▶ 渲染 + 编码: %s\n", format_name);
     }
-    
+
     printf("▶ 渲染项目: %s\n", project);
     printf("  格式: %s\n", format);
     printf("  帧范围: %d-%d\n", start_frame, end_frame);
     if (output) printf("  输出: %s\n", output);
-    
+
     auto_start_ipc();
-    
+
     // 打开项目
     char open_cmd[512];
     snprintf(open_cmd, sizeof(open_cmd), "moho:FileOpen(\"%s\")", project);
     ipc_send(open_cmd);
-    
+
     // 渲染命令
     char lua_cmd[CMD_SIZE];
     char output_path[512];
-    
-    // 视频格式：确保输出路径有正确后缀
+
+    // 视频格式:确保输出路径有正确后缀
     if (output) {
         snprintf(output_path, sizeof(output_path), "%s", output);
         // 检查是否需要添加后缀
@@ -625,11 +625,11 @@ static int cmd_render(int argc, char **argv) {
             if (strcmp(format, "MP4") == 0 && len > 4 && strcmp(output_path + len - 4, ".mp4") == 0) has_suffix = 1;
             if (strcmp(format, "APNG") == 0 && (len > 5 && strcmp(output_path + len - 5, ".apng") == 0 || len > 4 && strcmp(output_path + len - 4, ".png") == 0)) has_suffix = 1;
             if (strcmp(format, "QT") == 0 && len > 4 && strcmp(output_path + len - 4, ".mov") == 0) has_suffix = 1;
-            
+
             if (!has_suffix) {
                 // 自动添加后缀
-                const char *suffix = strcmp(format, "APNG") == 0 ? ".png" : 
-                                     strcmp(format, "QT") == 0 ? ".mov" : 
+                const char *suffix = strcmp(format, "APNG") == 0 ? ".png" :
+                                     strcmp(format, "QT") == 0 ? ".mov" :
                                      strcmp(format, "GIF") == 0 ? ".gif" : ".mp4";
                 snprintf(output_path + len, sizeof(output_path) - len, "%s", suffix);
                 printf("  输出路径已修正: %s\n", output_path);
@@ -643,16 +643,16 @@ static int cmd_render(int argc, char **argv) {
         strncpy(name, base, sizeof(name));
         char *dot = strrchr(name, '.');
         if (dot) *dot = '\0';
-        
+
         if (is_video) {
-            // APNG 输出后缀是 .png，其他用格式名
+            // APNG 输出后缀是 .png,其他用格式名
             const char *ext = strcmp(format, "APNG") == 0 ? "png" : format;
             snprintf(output_path, sizeof(output_path), "/tmp/%s.%s", name, ext);
         } else {
             snprintf(output_path, sizeof(output_path), "/tmp/%s", name);
         }
     }
-    
+
     // 视频格式需要临时 PNG 目录
     char png_dir[512];
     if (is_video) {
@@ -660,16 +660,16 @@ static int cmd_render(int argc, char **argv) {
     } else {
         snprintf(png_dir, sizeof(png_dir), "%s", output_path);
     }
-    
+
     // 创建输出目录
     char mkdir_cmd[512];
     snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p \"%s\"", png_dir);
     system(mkdir_cmd);
-    
+
     // IPC 渲染 PNG
     snprintf(lua_cmd, sizeof(lua_cmd),
         "local ipc = require('moho_ipc')\n"
-        "-- 使用全局 moho 对象（IPC 环境已设置）\n"
+        "-- 使用全局 moho 对象(IPC 环境已设置)\n"
         "local moho = _G.moho\n"
         "if not moho then\n"
         "  local helper = MOHO.ScriptInterfaceHelper:new_local()\n"
@@ -683,18 +683,18 @@ static int cmd_render(int argc, char **argv) {
         "end\n"
         "print('✓ 渲染完成: ' .. (%d - %d + 1) .. ' 帧')",
         png_dir, start_frame, end_frame, ext, end_frame, start_frame);
-    
+
     int ret = ipc_send_multiline(lua_cmd);
-    
+
     if (ret != 0) {
         fprintf(stderr, "✗ 渲染失败\n");
         return ret;
     }
-    
-    // 视频格式：调用 encode 编码
+
+    // 视频格式:调用 encode 编码
     if (is_video) {
         printf("✓ 序列已保存到: %s\n", png_dir);
-        
+
         // 根据格式选择编码器
         const char *codec = "mpeg4";
         const char *format_lower = "mp4";
@@ -708,10 +708,10 @@ static int cmd_render(int argc, char **argv) {
             codec = "mpeg4";
             format_lower = "mp4";
         }
-        
+
         printf("▶ 编码 %s: %s\n", format, output_path);
-        
-        // Lua 脚本：同步等待编码完成
+
+        // Lua 脚本:同步等待编码完成
         char encode_cmd[2048];
         snprintf(encode_cmd, sizeof(encode_cmd),
             "local ipc = require('moho_ipc')\n"
@@ -723,7 +723,7 @@ static int cmd_render(int argc, char **argv) {
             "  print('✗ 编码启动失败: ' .. tostring(err))\n"
             "  return\n"
             "end\n"
-            "-- 同步等待编码完成（最多 300 秒）\n"
+            "-- 同步等待编码完成(最多 300 秒)\n"
             "local max_wait = 300\n"
             "local waited = 0\n"
             "while waited < max_wait do\n"
@@ -745,15 +745,15 @@ static int cmd_render(int argc, char **argv) {
             "  print('✗ 编码超时')\n"
             "end",
             png_dir, output_path, codec);
-        
+
         ret = ipc_send_multiline(encode_cmd);
-        
+
         // 清理临时 PNG
         printf("▶ 清理临时帧...\n");
         char cleanup_cmd[256];
         snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf \"%s\"", png_dir);
         system(cleanup_cmd);
-        
+
         // 检查输出文件是否存在
         if (access(output_path, F_OK) == 0) {
             printf("✓ 视频已保存到: %s\n", output_path);
@@ -764,43 +764,43 @@ static int cmd_render(int argc, char **argv) {
     } else {
         printf("✓ 序列已保存到: %s\n", output_path);
     }
-    
+
     return ret;
 }
 
-// ========== draw（IPC 模式）==========
+// ========== draw(IPC 模式)==========
 
 static int cmd_draw(int argc, char **argv) {
     char *shape = argc > 1 ? argv[1] : "circle";
-    
+
     // 检查支持的形状
     if (strcmp(shape, "circle") != 0 && strcmp(shape, "bunny") != 0 && strcmp(shape, "puppy") != 0) {
         fprintf(stderr, "✗ 未知形状: %s\n", shape);
         fprintf(stderr, "可用形状: circle, bunny, puppy\n");
         return 1;
     }
-    
+
     printf("▶ 绘制形状: %s\n", shape);
-    printf("⚠️ draw 只绘制，不保存。请手动 Cmd+S\n");
-    
+    printf("⚠️ draw 只绘制,不保存。请手动 Cmd+S\n");
+
     auto_start_ipc();
-    
-    // 使用 draw_ipc.lua 脚本（不保存）
+
+    // 使用 draw_ipc.lua 脚本(不保存)
     char lua_cmd[256];
     snprintf(lua_cmd, sizeof(lua_cmd),
         "local home = os.getenv('HOME')\n"
         "dofile(home .. '/.openclaw/workspace/skills/moho-mate/scripts/draw_ipc.lua')\n"
         "draw_shape('%s')", shape);
-    
+
     printf("▶ IPC 绘制中...\n");
     int ret = ipc_send_multiline(lua_cmd);
-    
+
     if (ret == 0) {
-        printf("✓ 已绘制 %s，请手动保存\n", shape);
+        printf("✓ 已绘制 %s,请手动保存\n", shape);
     } else {
         fprintf(stderr, "✗ 绘制失败\n");
     }
-    
+
     return ret;
 }
 
@@ -808,27 +808,27 @@ static int cmd_draw(int argc, char **argv) {
 
 static int cmd_inspect(int argc, char **argv) {
     char *project = argc > 1 ? argv[1] : NULL;
-    
+
     if (!project) {
         fprintf(stderr, "用法: moho-mate inspect <project.moho>\n");
         return 1;
     }
-    
+
     if (access(project, R_OK) != 0) {
         fprintf(stderr, "✗ 项目不存在: %s\n", project);
         return 1;
     }
-    
+
     printf("=== 项目信息 ===\n");
     printf("  文件: %s\n", project);
-    
-    // 解析 .moho 文件（XML 格式）
+
+    // 解析 .moho 文件(XML 格式)
     FILE *f = fopen(project, "r");
     if (!f) {
         fprintf(stderr, "✗ 无法读取文件\n");
         return 1;
     }
-    
+
     char line[1024];
     int layer_count = 0;
     int bone_count = 0;
@@ -836,35 +836,35 @@ static int cmd_inspect(int argc, char **argv) {
     int start_frame = 0;
     int end_frame = 72;
     int fps = 24;
-    
+
     while (fgets(line, sizeof(line), f)) {
         // 统计图层
         if (strstr(line, "<layer")) layer_count++;
-        
+
         // 统计骨骼
         if (strstr(line, "<bone")) bone_count++;
-        
+
         // 统计 mesh
         if (strstr(line, "<mesh")) mesh_count++;
-        
+
         // 提取帧范围
         char *start_match = strstr(line, "start_frame=\"");
         if (start_match) {
             start_frame = atoi(start_match + 14);
         }
-        
+
         char *end_match = strstr(line, "end_frame=\"");
         if (end_match) {
             end_frame = atoi(end_match + 12);
         }
-        
+
         char *fps_match = strstr(line, "fps=\"");
         if (fps_match) {
             fps = atoi(fps_match + 5);
         }
     }
     fclose(f);
-    
+
     printf("\n=== 内容统计 ===\n");
     printf("  图层数: %d\n", layer_count);
     printf("  骨骼数: %d\n", bone_count);
@@ -873,7 +873,7 @@ static int cmd_inspect(int argc, char **argv) {
     printf("  帧范围: %d - %d\n", start_frame, end_frame);
     printf("  帧率: %d fps\n", fps);
     printf("  时长: %.2f 秒\n", (float)(end_frame - start_frame + 1) / fps);
-    
+
     return 0;
 }
 
@@ -881,24 +881,24 @@ static int cmd_inspect(int argc, char **argv) {
 
 static int cmd_config(int argc, char **argv) {
     char *action = argc > 1 ? argv[1] : "list";
-    
+
     if (strcmp(action, "list") == 0) {
         printf("=== Moho 配置目录 ===\n");
         printf("  路径: %s\n\n", MOHO_CONFIG_DIR);
-        
+
         DIR *dir = opendir(MOHO_CONFIG_DIR);
         if (!dir) {
             fprintf(stderr, "✗ 无法访问配置目录\n");
             return 1;
         }
-        
+
         struct dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
             if (entry->d_name[0] == '.') continue;
-            
+
             char path[512];
             snprintf(path, sizeof(path), "%s/%s", MOHO_CONFIG_DIR, entry->d_name);
-            
+
             struct stat st;
             if (stat(path, &st) == 0) {
                 char time_str[64];
@@ -907,36 +907,36 @@ static int cmd_config(int argc, char **argv) {
             }
         }
         closedir(dir);
-        
+
     } else if (strcmp(action, "backup") == 0) {
         printf("▶ 备份 Moho 配置\n");
-        
+
         char backup_dir[512];
         time_t now = time(NULL);
         struct tm *t = localtime(&now);
         snprintf(backup_dir, sizeof(backup_dir), "/tmp/moho_config_backup_%04d%02d%02d_%02d%02d",
                  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min);
-        
+
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" && cp -R \"%s\"/ \"%s\"/", 
+        snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" && cp -R \"%s\"/ \"%s\"/",
                  backup_dir, MOHO_CONFIG_DIR, backup_dir);
         system(cmd);
-        
+
         printf("✓ 已备份到: %s\n", backup_dir);
-        
+
     } else if (strcmp(action, "restore") == 0) {
         printf("▶ 恢复 Moho 配置\n");
-        
+
         // 找最新的备份
         char cmd[1024];
         snprintf(cmd, sizeof(cmd), "ls -dt /tmp/moho_config_backup_* 2>/dev/null | head -1");
-        
+
         FILE *fp = popen(cmd, "r");
         if (!fp) {
             fprintf(stderr, "✗ 无可用备份\n");
             return 1;
         }
-        
+
         char backup_dir[512];
         if (fgets(backup_dir, sizeof(backup_dir), fp) == NULL) {
             pclose(fp);
@@ -944,22 +944,22 @@ static int cmd_config(int argc, char **argv) {
             return 1;
         }
         pclose(fp);
-        
+
         // 去换行
         backup_dir[strcspn(backup_dir, "\n")] = 0;
-        
+
         printf("  源: %s\n", backup_dir);
-        
+
         snprintf(cmd, sizeof(cmd), "cp -R \"%s\"/* \"%s\"/", backup_dir, MOHO_CONFIG_DIR);
         system(cmd);
-        
+
         printf("✓ 已恢复\n");
-        
+
     } else {
         fprintf(stderr, "用法: moho-mate config list|backup|restore\n");
         return 1;
     }
-    
+
     return 0;
 }
 
@@ -975,7 +975,7 @@ static void print_usage(const char *prog) {
     printf("  %s status                                IPC 状态\n", prog);
     printf("  %s render project.moho [-f PNG] [-o out] 渲染项目\n", prog);
     printf("  %s encode input output [--fps 24]        编码视频\n", prog);
-    printf("  %s draw <shape>                    绘制形状（不保存）\n", prog);
+    printf("  %s draw <shape>                    绘制形状(不保存)\n", prog);
     printf("  %s inspect <project.moho>                查看项目\n", prog);
     printf("  %s config list|backup|restore           配置管理\n", prog);
 }
@@ -985,9 +985,9 @@ int main(int argc, char **argv) {
         print_usage(argv[0]);
         return 1;
     }
-    
+
     char *cmd = argv[1];
-    
+
     if (strcmp(cmd, "start") == 0) {
         return cmd_start(argc - 1, argv + 1);
     } else if (strcmp(cmd, "call") == 0) {
@@ -1055,7 +1055,7 @@ static int capture_print(lua_State *L) {
     }
     luaL_pushresult(&b);
     const char *str = lua_tostring(L, -1);
-    
+
     // 写入输出缓冲
     size_t len = strlen(str);
     if (g_output_len + len + 1 < OUTPUT_SIZE) {
@@ -1066,7 +1066,7 @@ static int capture_print(lua_State *L) {
         g_output_len += len;
         g_output_buffer[g_output_len] = 0;
     }
-    
+
     // 也输出到原始 print
     lua_getglobal(L, "_original_print");
     if (lua_isfunction(L, -1)) {
@@ -1075,11 +1075,11 @@ static int capture_print(lua_State *L) {
     } else {
         lua_pop(L, 1);
     }
-    
+
     return 0;
 }
 
-// 执行命令 (直接在 C 中实现，不依赖 Lua 的 ipc_execute)
+// 执行命令 (直接在 C 中实现,不依赖 Lua 的 ipc_execute)
 static const char* execute_via_helper(const char *cmd) {
     if (g_L == NULL) {
         log_msg("✗ g_L is NULL\n");
@@ -1098,7 +1098,7 @@ static const char* execute_via_helper(const char *cmd) {
         g_error_count++;
         return "error|MOHO not found";
     }
-    
+
     lua_getfield(g_L, -1, "ScriptInterfaceHelper");
     if (!lua_istable(g_L, -1)) {
         log_msg("✗ ScriptInterfaceHelper not found\n");
@@ -1106,7 +1106,7 @@ static const char* execute_via_helper(const char *cmd) {
         g_error_count++;
         return "error|ScriptInterfaceHelper not found";
     }
-    
+
     // 2. 创建 helper 实例: helper = MOHO.ScriptInterfaceHelper:new_local()
     lua_getfield(g_L, -1, "new_local");
     if (!lua_isfunction(g_L, -1)) {
@@ -1115,7 +1115,7 @@ static const char* execute_via_helper(const char *cmd) {
         g_error_count++;
         return "error|new_local not found";
     }
-    
+
     // 调用 new_local(ScriptInterfaceHelper)
     lua_pushvalue(g_L, -2);  // self = ScriptInterfaceHelper
     if (lua_pcall(g_L, 1, 1, 0) != 0) {
@@ -1124,10 +1124,10 @@ static const char* execute_via_helper(const char *cmd) {
         g_error_count++;
         return "error|new_local failed";
     }
-    
+
     // 栈: MOHO, ScriptInterfaceHelper, helper
     // helper 实例在栈顶
-    
+
     // 3. 获取 moho 对象: helper:MohoObject()
     lua_getfield(g_L, -1, "MohoObject");
     if (!lua_isfunction(g_L, -1)) {
@@ -1136,7 +1136,7 @@ static const char* execute_via_helper(const char *cmd) {
         g_error_count++;
         return "error|MohoObject not found";
     }
-    
+
     lua_pushvalue(g_L, -2);  // self = helper
     if (lua_pcall(g_L, 1, 1, 0) != 0) {
         log_msg("✗ MohoObject failed: %s\n", lua_tostring(g_L, -1));
@@ -1144,42 +1144,83 @@ static const char* execute_via_helper(const char *cmd) {
         g_error_count++;
         return "error|MohoObject failed";
     }
-    
+
     // 栈: MOHO, ScriptInterfaceHelper, helper, moho
-    
+
     // 4. 设置全局 moho
     lua_setglobal(g_L, "moho");
     // 栈: MOHO, ScriptInterfaceHelper, helper
-    
+
     // 保存 helper 到 registry (用于后续清理)
     lua_setfield(g_L, LUA_REGISTRYINDEX, "_ipc_helper");
     // 栈: MOHO, ScriptInterfaceHelper
-    
+
     lua_pop(g_L, 2);  // pop MOHO and ScriptInterfaceHelper
-    
-    // 5. 清空栈，确保干净状态
+
+    // 5. 清空栈,确保干净状态
     lua_pop(g_L, lua_gettop(g_L));
-    
+
     // 6. 设置 print hook 捕获输出
     lua_getglobal(g_L, "print");
     lua_setglobal(g_L, "_original_print");
     lua_pushcfunction(g_L, capture_print);
     lua_setglobal(g_L, "print");
+
+    // ⚠️ 闭包方案：创建沙盒环境表
+    // 1. 创建环境表（用 metatable 继承 _G）
+    lua_newtable(g_L);  // 栈: env
     
-    // ⚠️ 临时设置全局 moho_ipc（执行完立即删除）
+    // 2. 设置 metatable（__index = _G）
+    lua_newtable(g_L);  // 栈: env, mt
+    lua_getglobal(g_L, "_G");  // 栈: env, mt, _G
+    lua_setfield(g_L, -2, "__index");  // mt.__index = _G
+    lua_setmetatable(g_L, -2);  // env.metatable = mt，栈: env
+    
+    // 3. 复制 moho
+    lua_getglobal(g_L, "moho");
+    lua_setfield(g_L, -2, "moho");
+    
+    // 4. 复制 print
+    lua_getglobal(g_L, "print");
+    lua_setfield(g_L, -2, "print");
+    
+    // 5. 复制 moho_ipc（从 registry）
     lua_getfield(g_L, LUA_REGISTRYINDEX, "_ipc_module");
     if (lua_istable(g_L, -1)) {
-        lua_setglobal(g_L, "moho_ipc");  // 临时全局
+        lua_setfield(g_L, -2, "moho_ipc");
+        log_msg("✓ moho_ipc 已加载到环境表\n");
     } else {
-        lua_pop(g_L, 1);  // 移除无效值
-        log_msg("⚠️ _ipc_module not found in registry\n");
+        lua_pop(g_L, 1);
+        log_msg("⚠️ _ipc_module not found\n");
     }
     
-    // 7. 执行命令
-    log_msg("执行前栈大小: %d\n", lua_gettop(g_L));
-    int ret = luaL_dostring(g_L, cmd);
-    log_msg("执行后栈大小: %d\n", lua_gettop(g_L));
+    // 环境表现在在栈顶（位置 -1）
     
+    // 7. 编译命令为函数
+    log_msg("编译命令...\n");
+    int load_ret = luaL_loadstring(g_L, cmd);  // 栈: env, func
+    
+    if (load_ret != 0) {
+        log_msg("✗ 编译失败: %s\n", lua_tostring(g_L, -1));
+        snprintf(g_response, RESP_SIZE, "error|%s", lua_tostring(g_L, -1));
+        lua_pop(g_L, 2);  // 清空环境和错误
+        g_error_count++;
+        return g_response;
+    }
+    
+    // 8. 设置函数的 _ENV upvalue
+    log_msg("设置环境表作为 _ENV...\n");
+    // 栈: env, func
+    lua_pushvalue(g_L, -2);  // 复制 env 到栈顶，栈: env, func, env_copy
+    const char *uvname = lua_setupvalue(g_L, -2, 1);  // 设置 func 的第一个 upvalue
+    log_msg("setupvalue 返回: %s\n", uvname ? uvname : "(null)");
+    // 栈: env, func
+    
+    // 9. 执行函数
+    log_msg("执行前栈大小: %d\n", lua_gettop(g_L));
+    int ret = lua_pcall(g_L, 0, 0, 0);
+    log_msg("执行后栈大小: %d\n", lua_gettop(g_L));
+
     // 8. 保存返回值
     char retval[512] = "";
     int nresults = lua_gettop(g_L);
@@ -1189,30 +1230,22 @@ static const char* execute_via_helper(const char *cmd) {
             strncpy(retval, s, sizeof(retval) - 1);
         }
     }
-    
-    // 9. 恢复 print
-    lua_pop(g_L, lua_gettop(g_L));  // 清空栈
+
+    // 9. 恢复 print + 清理环境表
+    lua_pop(g_L, lua_gettop(g_L));  // 清空栈(包括环境表)
     lua_getglobal(g_L, "_original_print");
     lua_setglobal(g_L, "print");
-    
-    // ⚠️ 立即删除临时全局 moho_ipc
-    lua_pushnil(g_L);
-    lua_setglobal(g_L, "moho_ipc");
-    
+
+    // ⚠️ 不需要删除全局 moho_ipc(从未设置全局)
+
     if (ret != 0) {
         log_msg("✗ 执行错误: %s\n", lua_tostring(g_L, -1));
         const char *err = lua_tostring(g_L, -1);
         snprintf(g_response, RESP_SIZE, "error|%s", err ? err : "unknown");
-        
-        // ⚠️ 错误路径也要删除临时全局
-        lua_pop(g_L, lua_gettop(g_L));
-        lua_pushnil(g_L);
-        lua_setglobal(g_L, "moho_ipc");
-        
         g_error_count++;
         return g_response;
     }
-    
+
     // 10. 返回结果
     if (retval[0]) {
         snprintf(g_response, RESP_SIZE, "ok|%s", retval);
@@ -1221,7 +1254,7 @@ static const char* execute_via_helper(const char *cmd) {
     } else {
         strcpy(g_response, "ok|(无输出)");
     }
-    
+
     log_msg("✓ 执行成功 (calls=%d, errors=%d)\n", g_call_count, g_error_count);
     return g_response;
 }
@@ -1462,7 +1495,7 @@ static CFRunLoopTimerRef g_play_timer = NULL;
 static CFRunLoopSourceRef g_play_source = NULL;
 
 // APNG 编码(使用 FFmpeg APNG 编码器)
-// 输出标准 .png 后缀（APNG 是 PNG 的动画扩展）
+// 输出标准 .png 后缀(APNG 是 PNG 的动画扩展)
 static void* encode_apng_thread(void *arg) {
     AVFormatContext *fmt_ctx = NULL;
     AVCodecContext *codec_ctx = NULL;
@@ -1570,7 +1603,7 @@ static void* encode_apng_thread(void *arg) {
     codec_ctx->time_base = (AVRational){1, g_encode_fps};
     codec_ctx->framerate = (AVRational){g_encode_fps, 1};
     codec_ctx->pix_fmt = AV_PIX_FMT_RGBA;  // APNG 使用 RGBA
-    
+
     // APNG 特定设置
     // plays: 0 = 无限循环, 1+ = 播放次数
     av_opt_set_int(codec_ctx, "plays", 0, 0);  // 无限循环
@@ -1617,25 +1650,25 @@ static void* encode_apng_thread(void *arg) {
     pkt = av_packet_alloc();
     frame = av_frame_alloc();  // 输出帧
     png_frame = av_frame_alloc();  // 输入帧
-    
-    // 创建帧缓冲（APNG 需要 RGBA）
+
+    // 创建帧缓冲(APNG 需要 RGBA)
     frame->format = AV_PIX_FMT_RGBA;
     frame->width = input_width;
     frame->height = input_height;
     av_frame_get_buffer(frame, 0);
-    
-    // 创建图像转换上下文（PNG 可能不是 RGBA）
+
+    // 创建图像转换上下文(PNG 可能不是 RGBA)
     struct SwsContext *sws_ctx = NULL;
-    
+
     int input_frame = 0;
-    
+
     while (1) {
         snprintf(png_path, sizeof(png_path), g_encode_input, input_frame);
-        
+
         if (access(png_path, R_OK) != 0) {
             break;  // 没有更多帧
         }
-        
+
         png_fmt = NULL;
         ret = avformat_open_input(&png_fmt, png_path, NULL, NULL);
         if (ret < 0) {
@@ -1643,9 +1676,9 @@ static void* encode_apng_thread(void *arg) {
             input_frame++;
             continue;
         }
-        
+
         avformat_find_stream_info(png_fmt, NULL);
-        
+
         video_stream = -1;
         for (unsigned int i = 0; i < png_fmt->nb_streams; i++) {
             if (png_fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -1653,23 +1686,23 @@ static void* encode_apng_thread(void *arg) {
                 break;
             }
         }
-        
+
         if (video_stream >= 0) {
             AVCodecParameters *png_par = png_fmt->streams[video_stream]->codecpar;
             png_decoder = avcodec_find_decoder(png_par->codec_id);
             png_codec = avcodec_alloc_context3(png_decoder);
             avcodec_parameters_to_context(png_codec, png_par);
             avcodec_open2(png_codec, png_decoder, NULL);
-            
+
             png_pkt = av_packet_alloc();
-            
+
             while (av_read_frame(png_fmt, png_pkt) >= 0) {
                 if (png_pkt->stream_index == video_stream) {
                     ret = avcodec_send_packet(png_codec, png_pkt);
                     if (ret >= 0) {
                         ret = avcodec_receive_frame(png_codec, png_frame);
                         if (ret >= 0) {
-                            // 创建转换上下文（根据实际输入格式）
+                            // 创建转换上下文(根据实际输入格式)
                             if (!sws_ctx) {
                                 sws_ctx = sws_getContext(
                                     png_frame->width, png_frame->height, png_frame->format,
@@ -1677,21 +1710,21 @@ static void* encode_apng_thread(void *arg) {
                                     SWS_BILINEAR, NULL, NULL, NULL
                                 );
                             }
-                            
-                            // 确保帧缓冲可写（关键！）
+
+                            // 确保帧缓冲可写(关键!)
                             ret = av_frame_make_writable(frame);
                             if (ret < 0) {
                                 log_msg("[encode] 无法使帧可写\n");
                                 continue;
                             }
-                            
+
                             // 转换到 RGBA
                             sws_scale(sws_ctx, png_frame->data, png_frame->linesize,
                                      0, png_frame->height, frame->data, frame->linesize);
-                            
+
                             // 设置帧属性
                             frame->pts = input_frame;
-                            
+
                             // 编码为 APNG 帧
                             ret = avcodec_send_frame(codec_ctx, frame);
                             if (ret >= 0) {
@@ -1706,20 +1739,20 @@ static void* encode_apng_thread(void *arg) {
                 }
                 av_packet_unref(png_pkt);
             }
-            
+
             av_packet_free(&png_pkt);
             avcodec_free_context(&png_codec);
         }
-        
+
         avformat_close_input(&png_fmt);
         input_frame++;
         frame_count++;
         g_encode_progress = (float)frame_count / (frame_count + 50.0f);
     }
-    
+
     // 清理转换上下文
     if (sws_ctx) sws_freeContext(sws_ctx);
-    
+
     // 刷新编码器
     avcodec_send_frame(codec_ctx, NULL);
     while (avcodec_receive_packet(codec_ctx, pkt) >= 0) {
@@ -1727,9 +1760,9 @@ static void* encode_apng_thread(void *arg) {
         pkt->stream_index = stream->index;
         av_interleaved_write_frame(fmt_ctx, pkt);
     }
-    
+
     av_write_trailer(fmt_ctx);
-    
+
     log_msg("[encode] APNG 编码完成: %d 帧 -> %s\n", frame_count, output_path);
     g_encode_status = 2;
     g_encode_progress = 1.0f;
@@ -1745,11 +1778,11 @@ static void* encode_apng_thread(void *arg) {
         }
         avformat_free_context(fmt_ctx);
     }
-    
+
     if (g_encode_status == 3) {
         log_msg("[encode] APNG 编码失败: %s\n", g_encode_error);
     }
-    
+
     return NULL;
 }
 
@@ -1972,22 +2005,22 @@ static void* encode_gif_thread(void *arg) {
     avfilter_inout_free(&outputs);
 
     log_msg("[encode] GIF 滤镜管道已创建: %s\n", filter_desc);
-    
-    // === 第四步：读取 PNG 序列并推入滤镜管道 ===
+
+    // === 第四步:读取 PNG 序列并推入滤镜管道 ===
     pkt = av_packet_alloc();
-    frame = av_frame_alloc();   // 输出帧（PAL8）
-    png_frame = av_frame_alloc();  // 输入帧（RGBA）
-    
+    frame = av_frame_alloc();   // 输出帧(PAL8)
+    png_frame = av_frame_alloc();  // 输入帧(RGBA)
+
     int input_frame = 0;
-    
-    // 第一阶段：将所有帧推入滤镜管道
+
+    // 第一阶段:将所有帧推入滤镜管道
     while (1) {
         snprintf(png_path, sizeof(png_path), g_encode_input, input_frame);
-        
+
         if (access(png_path, R_OK) != 0) {
             break;
         }
-        
+
         png_fmt = NULL;
         ret = avformat_open_input(&png_fmt, png_path, NULL, NULL);
         if (ret < 0) {
@@ -1995,9 +2028,9 @@ static void* encode_gif_thread(void *arg) {
             input_frame++;
             continue;
         }
-        
+
         avformat_find_stream_info(png_fmt, NULL);
-        
+
         video_stream = -1;
         for (unsigned int i = 0; i < png_fmt->nb_streams; i++) {
             if (png_fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -2005,16 +2038,16 @@ static void* encode_gif_thread(void *arg) {
                 break;
             }
         }
-        
+
         if (video_stream >= 0) {
             AVCodecParameters *png_par = png_fmt->streams[video_stream]->codecpar;
             png_decoder = avcodec_find_decoder(png_par->codec_id);
             png_codec = avcodec_alloc_context3(png_decoder);
             avcodec_parameters_to_context(png_codec, png_par);
             avcodec_open2(png_codec, png_decoder, NULL);
-            
+
             png_pkt = av_packet_alloc();
-            
+
             while (av_read_frame(png_fmt, png_pkt) >= 0) {
                 if (png_pkt->stream_index == video_stream) {
                     ret = avcodec_send_packet(png_codec, png_pkt);
@@ -2032,30 +2065,30 @@ static void* encode_gif_thread(void *arg) {
                 }
                 av_packet_unref(png_pkt);
             }
-            
+
             av_packet_free(&png_pkt);
             avcodec_free_context(&png_codec);
         }
-        
+
         avformat_close_input(&png_fmt);
         input_frame++;
         g_encode_progress = (float)input_frame / (input_frame + 100.0f) * 0.5f;  // 前50%进度
     }
-    
+
     int total_frames = input_frame;
-    log_msg("[encode] 共读取 %d 帧，开始生成调色板...\n", total_frames);
-    
-    // 刷新滤镜管道（让 palettegen 生成调色板）
+    log_msg("[encode] 共读取 %d 帧,开始生成调色板...\n", total_frames);
+
+    // 刷新滤镜管道(让 palettegen 生成调色板)
     ret = av_buffersrc_add_frame_flags(buffersrc_ctx, NULL, AV_BUFFERSRC_FLAG_PUSH);
     if (ret < 0) {
         log_msg("[encode] 无法刷新滤镜管道\n");
     }
-    
-    // 第二阶段：从滤镜管道拉取处理后的帧并编码
+
+    // 第二阶段:从滤镜管道拉取处理后的帧并编码
     frame_count = 0;
     while ((ret = av_buffersink_get_frame(buffersink_ctx, frame)) >= 0) {
         frame->pts = frame_count;
-        
+
         // 编码
         ret = avcodec_send_frame(codec_ctx, frame);
         if (ret >= 0) {
@@ -2069,7 +2102,7 @@ static void* encode_gif_thread(void *arg) {
         av_frame_unref(frame);
         g_encode_progress = 0.5f + (float)frame_count / total_frames * 0.5f;  // 后50%进度
     }
-    
+
     // 刷新编码器
     avcodec_send_frame(codec_ctx, NULL);
     while (avcodec_receive_packet(codec_ctx, pkt) >= 0) {
@@ -2077,9 +2110,9 @@ static void* encode_gif_thread(void *arg) {
         pkt->stream_index = stream->index;
         av_interleaved_write_frame(fmt_ctx, pkt);
     }
-    
+
     av_write_trailer(fmt_ctx);
-    
+
     log_msg("[encode] GIF 编码完成: %d 帧 -> %s\n", frame_count, g_encode_output);
     g_encode_status = 2;
     g_encode_progress = 1.0f;
@@ -2096,11 +2129,11 @@ gif_cleanup:
         }
         avformat_free_context(fmt_ctx);
     }
-    
+
     if (g_encode_status == 3) {
         log_msg("[encode] GIF 编码失败: %s\n", g_encode_error);
     }
-    
+
     return NULL;
 }
 
@@ -2384,12 +2417,12 @@ static int l_encode_video(lua_State *L) {
     int crf = luaL_optinteger(L, 4, 23);
     const char *codec = luaL_optstring(L, 5, "mpeg4");
 
-    // 如果上次编码已完成，重置状态
+    // 如果上次编码已完成,重置状态
     if (g_encode_status == 2 || g_encode_status == 3) {
         g_encode_status = 0;  // idle
         log_msg("[encode] 重置上次编码状态\n");
     }
-    
+
     if (g_encode_status == 1) {
         lua_pushboolean(L, 0);
         lua_pushstring(L, "编码正在进行中");
@@ -2409,20 +2442,20 @@ static int l_encode_video(lua_State *L) {
     // 检测输出格式
     size_t output_len = strlen(output);
     int is_gif = (output_len > 4 && strcmp(output + output_len - 4, ".gif") == 0);
-    // APNG: 检测 .apng（明确动画意图）或 .png（标准，需判断输入是否多帧）
+    // APNG: 检测 .apng(明确动画意图)或 .png(标准,需判断输入是否多帧)
     int explicit_apng = (output_len > 5 && strcmp(output + output_len - 5, ".apng") == 0);
     int is_png = (output_len > 4 && strcmp(output + output_len - 4, ".png") == 0);
-    
-    // 如果是 .png，检查输入是否是多帧序列（包含 % 格式化符）
+
+    // 如果是 .png,检查输入是否是多帧序列(包含 % 格式化符)
     int is_multi_frame = (strstr(input, "%") != NULL);
-    
-    // APNG 逻辑：
+
+    // APNG 逻辑:
     // 1. 用户指定 .apng → 明确要动画
     // 2. 用户指定 .png + 多帧输入 → 自动切换到 APNG
     int is_apng = explicit_apng || (is_png && is_multi_frame && !is_gif);
-    
-    // 如果输出是 .png 单帧，不需要编码（静态 PNG）
-    // 这种情况应该在 render 命令中处理，不调用 encode
+
+    // 如果输出是 .png 单帧,不需要编码(静态 PNG)
+    // 这种情况应该在 render 命令中处理,不调用 encode
 
     // 在后台线程启动编码
     if (is_apng) {
@@ -2492,7 +2525,7 @@ static int l_play(lua_State *L) {
     g_play_fps = luaL_optinteger(L, 3, 24);
     g_play_current_frame = g_play_start_frame;
     g_play_status = 1;  // playing
-    
+
     // 立即切换到起始帧
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "moho:SetCurFrame(%d, true)", g_play_current_frame);
@@ -2506,12 +2539,12 @@ static int l_play(lua_State *L) {
             lua_pop(g_L, 1);
         }
     }
-    
+
     // 启动定时器
     start_play_timer();
-    
+
     log_msg("[playback] 播放: %d-%d @ %dfps\n", g_play_start_frame, g_play_end_frame, g_play_fps);
-    
+
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -2536,7 +2569,7 @@ static int l_stop_play(lua_State *L) {
     g_play_status = 0;  // stopped
     g_play_current_frame = 0;
     stop_play_timer();  // 停止定时器
-    
+
     // 切换到帧 0
     if (g_L) {
         lua_getglobal(g_L, "ipc_execute");
@@ -2548,7 +2581,7 @@ static int l_stop_play(lua_State *L) {
             lua_pop(g_L, 1);
         }
     }
-    
+
     log_msg("[playback] 已停止\n");
     lua_pushboolean(L, 1);
     return 1;
@@ -2558,7 +2591,7 @@ static int l_stop_play(lua_State *L) {
 static int l_seek(lua_State *L) {
     int frame = luaL_checkinteger(L, 1);
     g_play_current_frame = frame;
-    
+
     // 立即切换帧
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "moho:SetCurFrame(%d, true)", frame);
@@ -2572,7 +2605,7 @@ static int l_seek(lua_State *L) {
             lua_pop(g_L, 1);
         }
     }
-    
+
     log_msg("[playback] 跳转: frame=%d\n", frame);
     lua_pushboolean(L, 1);
     return 1;
@@ -2581,26 +2614,26 @@ static int l_seek(lua_State *L) {
 // Lua API: play_status() -> table
 static int l_play_status(lua_State *L) {
     lua_newtable(L);
-    
+
     lua_pushinteger(L, g_play_status);
     lua_setfield(L, -2, "status");
-    
+
     const char *status_text[] = {"stopped", "playing", "paused"};
     lua_pushstring(L, status_text[g_play_status]);
     lua_setfield(L, -2, "status_text");
-    
+
     lua_pushinteger(L, g_play_current_frame);
     lua_setfield(L, -2, "current_frame");
-    
+
     lua_pushinteger(L, g_play_start_frame);
     lua_setfield(L, -2, "start_frame");
-    
+
     lua_pushinteger(L, g_play_end_frame);
     lua_setfield(L, -2, "end_frame");
-    
+
     lua_pushinteger(L, g_play_fps);
     lua_setfield(L, -2, "fps");
-    
+
     return 1;
 }
 
@@ -2610,23 +2643,23 @@ static int l_is_playing(lua_State *L) {
     return 1;
 }
 
-// 播放定时器回调（在主线程执行帧切换）
+// 播放定时器回调(在主线程执行帧切换)
 static void play_timer_callback(CFRunLoopTimerRef timer, void *info) {
     if (g_play_status != 1) return;  // 不是播放状态
-    
+
     // 切换到下一帧
     g_play_current_frame++;
-    
+
     // 检查是否结束
     if (g_play_current_frame > g_play_end_frame) {
         g_play_current_frame = g_play_start_frame;  // 循环播放
         // 或者停止: g_play_status = 0;
     }
-    
+
     // 执行帧切换命令
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "moho:SetCurFrame(%d, false)", g_play_current_frame);
-    
+
     if (g_L) {
         lua_getglobal(g_L, "ipc_execute");
         if (lua_isfunction(g_L, -1)) {
@@ -2642,10 +2675,10 @@ static void play_timer_callback(CFRunLoopTimerRef timer, void *info) {
 // 启动播放定时器
 static void start_play_timer(void) {
     if (g_play_timer) return;  // 已存在
-    
-    // 计算定时器间隔（秒）
+
+    // 计算定时器间隔(秒)
     double interval = 1.0 / g_play_fps;
-    
+
     // 创建定时器
     CFRunLoopTimerContext ctx = {0, NULL, NULL, NULL, NULL};
     g_play_timer = CFRunLoopTimerCreate(
@@ -2657,7 +2690,7 @@ static void start_play_timer(void) {
         play_timer_callback,
         &ctx
     );
-    
+
     if (g_play_timer) {
         CFRunLoopAddTimer(CFRunLoopGetCurrent(), g_play_timer, kCFRunLoopDefaultMode);
         log_msg("[playback] 定时器已启动 (interval=%.3fs)\n", interval);
@@ -2680,10 +2713,10 @@ static void stop_play_timer(void) {
 // 停止 IPC 并退出 Moho
 static int l_quit(lua_State *L) {
     log_msg("=== IPC quit ===\n");
-    
+
     // 1. 停止 IPC
     l_stop(L);
-    
+
     // 2. 获取 moho 对象并调用 Quit
     lua_getglobal(L, "moho");
     if (lua_istable(L, -1)) {
@@ -2697,7 +2730,7 @@ static int l_quit(lua_State *L) {
         }
     }
     lua_pop(L, 1);
-    
+
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -2723,27 +2756,27 @@ static const luaL_Reg funcs[] = {
 };
 
 int luaopen_moho_ipc(lua_State *L) {
-    // ⚠️ 检查是否已经加载（防止重复加载）
+    // ⚠️ 检查是否已经加载(防止重复加载)
     lua_getfield(L, LUA_REGISTRYINDEX, "_ipc_module");
     if (lua_istable(L, -1)) {
-        log_msg("模块已存在，返回缓存\n");
+        log_msg("模块已存在,返回缓存\n");
         return 1;  // 返回已存在的模块
     }
     lua_pop(L, 1);  // 移除 nil
-    
+
     // 创建新模块 table
     lua_newtable(L);
-    
+
     // 注册函数
     for (int i = 0; funcs[i].name; i++) {
         lua_pushcfunction(L, funcs[i].func);
         lua_setfield(L, -2, funcs[i].name);
     }
-    
-    // 同时存到 registry（给 C 的 execute_via_helper 用）
+
+    // 同时存到 registry(给 C 的 execute_via_helper 用)
     lua_pushvalue(L, -1);  // 复制 table
     lua_setfield(L, LUA_REGISTRYINDEX, "_ipc_module");
-    
-    log_msg("模块加载（隔离模式，不注册 package.loaded）\n");
-    return 1;  // 返回 table，但 Moho 不会自动注册
+
+    log_msg("模块加载(隔离模式,不注册 package.loaded)\n");
+    return 1;  // 返回 table,但 Moho 不会自动注册
 }
