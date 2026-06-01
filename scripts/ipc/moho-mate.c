@@ -1429,6 +1429,9 @@ static int l_start(lua_State *L) {
         lua_pushstring(L, "bind() failed");
         return 2;
     }
+    
+    // ⚠️ 限制 Socket 权限（只有所有者可访问）
+    chmod(SOCKET_PATH, 0600);
 
     if (listen(sock, 5) < 0) {
         close(sock);
