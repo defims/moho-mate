@@ -35,6 +35,11 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <limits.h>
+
+// ========== macOS 进程 API ==========
+#include <libproc.h>
+#include <mach-o/dyld.h>
 
 // ========== Lua ==========
 #include <lua.h>
@@ -71,6 +76,98 @@
 #define RESP_SIZE 16384
 #define OUTPUT_SIZE 16384
 #define HTTP_BUF_SIZE 4096
+
+// ========== 前向声明 ==========
+static void log_msg(const char *fmt, ...);
+
+// ========== 进程路径验证 ==========
+
+// 获取当前进程的二进制路径
+static char* get_self_path(void) {
+    static char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    
+    if (_NSGetExecutablePath(path, &size) != 0) {
+        return NULL;
+    }
+    
+    char resolved[PATH_MAX];
+    if (realpath(path, resolved) == NULL) {
+        return NULL;
+    }
+    
+    strcpy(path, resolved);
+    return path;
+}
+
+// 获取指定 PID 的进程二进制路径
+static char* get_process_path(pid_t pid) {
+    static char path[PATH_MAX];
+    
+    int ret = proc_pidpath(pid, path, sizeof(path));
+    if (ret <= 0) {
+        return NULL;
+    }
+    
+    char resolved[PATH_MAX];
+    if (realpath(path, resolved) == NULL) {
+        return NULL;
+    }
+    
+    strcpy(path, resolved);
+    return path;
+}
+
+// 获取 socket 连接的客户端 PID
+static pid_t get_client_pid(int client_fd) {
+    pid_t pid = -1;
+    socklen_t len = sizeof(pid);
+    
+    if (getsockopt(client_fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) == 0) {
+        return pid;
+    }
+    
+    return -1;
+}
+
+// 全局变量：记录启动者的二进制路径
+static char g_ipc_owner_path[PATH_MAX] = {0};
+
+// 设置 IPC 启动者路径（在 l_start 时调用）
+static void set_ipc_owner_path(const char *path) {
+    if (path) {
+        strncpy(g_ipc_owner_path, path, PATH_MAX - 1);
+    }
+}
+
+// 验证客户端是否是同一个二进制
+static int verify_client_binary(int client_fd) {
+    pid_t client_pid = get_client_pid(client_fd);
+    if (client_pid < 0) {
+        log_msg("✗ 无法获取客户端 PID\n");
+        return 0;
+    }
+    
+    // 获取客户端路径
+    char *client_path = get_process_path(client_pid);
+    if (!client_path) {
+        log_msg("✗ 无法获取客户端路径 (PID=%d)\n", client_pid);
+        return 0;
+    }
+    
+    log_msg("客户端验证:\n");
+    log_msg("  启动者: %s\n", g_ipc_owner_path);
+    log_msg("  客户端: %s (PID=%d)\n", client_path, client_pid);
+    
+    // 比较客户端路径和启动者路径
+    if (g_ipc_owner_path[0] == '\0' || strcmp(g_ipc_owner_path, client_path) != 0) {
+        log_msg("✗ 拒绝连接：不是启动者\n");
+        return 0;
+    }
+    
+    log_msg("✓ 验证通过：同一个 moho-mate\n");
+    return 1;
+}
 
 // ========== 配置管理(IPC 自动备份/恢复) ==========
 
@@ -1320,6 +1417,12 @@ static void listen_callback(CFSocketRef s, CFSocketCallBackType type,
     int client_fd = *(int *)data;
     log_msg("新连接: fd=%d\n", client_fd);
 
+    // ⚠️ 验证客户端二进制路径
+    if (!verify_client_binary(client_fd)) {
+        close(client_fd);
+        return;
+    }
+
     // 关闭旧连接
     if (g_client_socket) {
         CFSocketInvalidate(g_client_socket);
@@ -1360,6 +1463,21 @@ static void listen_callback(CFSocketRef s, CFSocketCallBackType type,
 // Lua API: start()
 static int l_start(lua_State *L) {
     log_msg("=== IPC start ===\n");
+    
+    // ⚠️ 记录启动者路径（从 Lua 全局变量获取）
+    lua_getglobal(L, "IPC_DIR");
+    const char *ipc_dir = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    
+    if (ipc_dir) {
+        char owner_path[PATH_MAX];
+        snprintf(owner_path, sizeof(owner_path), "%s/moho-mate", ipc_dir);
+        char resolved[PATH_MAX];
+        if (realpath(owner_path, resolved)) {
+            set_ipc_owner_path(resolved);
+            log_msg("启动者路径: %s\n", resolved);
+        }
+    }
     
     // ⚠️ 验证启动令牌（防止其他脚本调用）
     FILE *token_file = fopen("/tmp/moho_ipc_token", "r");
