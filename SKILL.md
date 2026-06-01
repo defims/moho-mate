@@ -64,43 +64,6 @@ moho-mate config backup
 moho-mate config restore
 ```
 
-### ⚠️ Token 认证服务
-
-**IPC 需要 Token 认证**，Token 服务运行在 `127.0.0.1:9527`。
-
-**启动 Token 服务**：
-```bash
-node /Users/def/.openclaw/workspace/skills/moho-mate/scripts/token-service/server.js
-```
-
-**Token 有效期机制**：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `TOKEN_EXPIRE` | 3600 秒 (1小时) | Token 有效期 |
-| 清理周期 | 60 秒 | 自动清理过期 token |
-
-**客户端行为**：
-
-| 客户端 | Token 获取 | 说明 |
-|--------|-----------|------|
-| `moho-mate-call` | 每次调用 `/token/create` | 不缓存，每次获取新 token |
-| `moho_ipc_client` | 每次调用 `/token/create` | 不缓存，不写文件 |
-
-**⚠️ 安全设计**：
-- Token **不写入文件**，避免被其他进程读取
-- 每次连接从 HTTP 服务获取新 Token
-- Token 服务仅绑定 `127.0.0.1`（本机）
-
-**修改有效期**：
-```bash
-# 启动时设置环境变量
-MOHO_TOKEN_EXPIRE=28800 node server.js  # 8 小时
-
-# 或创建时指定（仅 moho-mate-call 支持）
-# C 客户端使用默认值
-```
-
 ### encode 视频编码
 
 **GIF**: 使用 libavfilter palettegen/paletteuse 滤镜优化调色板（已整合到 moho_ipc.so）

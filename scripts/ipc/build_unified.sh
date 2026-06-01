@@ -58,7 +58,7 @@ echo "=== 链接统一版 moho-mate ==="
 # 关键：-Wl,-export_dynamic 让 luaopen_moho_ipc 符号可被 dlopen 加载
 gcc -o "$OUTPUT" moho_mate.o $OBJS \
     -framework CoreFoundation \
-    -lcurl \
+    \
     -L"$MOHO_FRAMEWORKS" \
     -L"$SCRIPTS_DIR" \
     -lavcodec.61 \
