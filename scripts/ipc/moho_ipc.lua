@@ -36,6 +36,33 @@ function MohoScript(moho)
     log_clear()
     log("=== IPC v" .. VERSION .. " ===")
 
+    -- ⚠️ 验证启动令牌（只有 moho-mate 创建的 wrapper.lua 才能启动）
+    local IPC_START_TOKEN = IPC_START_TOKEN or ""
+    if IPC_START_TOKEN == "" or IPC_START_TOKEN == "$IPC_START_TOKEN" then
+        log("✗ 启动拒绝：缺少启动令牌")
+        log("⚠️ 只有 moho-mate 创建的 wrapper.lua 才能启动 IPC")
+        return
+    end
+    
+    -- 读取令牌文件验证
+    local token_file = io.open("/tmp/moho_ipc_token", "r")
+    if not token_file then
+        log("✗ 启动拒绝：令牌文件不存在")
+        return
+    end
+    
+    local expected_token = token_file:read("*l")
+    token_file:close()
+    
+    if IPC_START_TOKEN ~= expected_token then
+        log("✗ 启动拒绝：令牌验证失败")
+        log("  期望: " .. tostring(expected_token))
+        log("  收到: " .. tostring(IPC_START_TOKEN))
+        return
+    end
+    
+    log("✓ 启动令牌验证通过")
+
     -- 加载 IPC 模块
     local exe_path = IPC_DIR .. "/moho-mate"
     package.cpath = exe_path .. ";" .. package.cpath

@@ -349,6 +349,21 @@ static int cmd_start(int argc, char **argv) {
     fprintf(f, "USER_PROJECT = \"%s\"\n", project ? project : "");
     fprintf(f, "USER_SCRIPT = \"%s\"\n", script ? script : "");
     fprintf(f, "IPC_TIMEOUT = %d\n", timeout);
+    
+    // ⚠️ 生成启动令牌（防止其他脚本启动 IPC）
+    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+    char token[64];
+    snprintf(token, sizeof(token), "%ld_%d_%d", time(NULL), getpid(), rand() % 10000);
+    fprintf(f, "IPC_START_TOKEN = \"%s\"\n", token);
+    
+    // 写入令牌文件（只有 moho-mate 可读）
+    FILE *token_file = fopen("/tmp/moho_ipc_token", "w");
+    if (token_file) {
+        chmod("/tmp/moho_ipc_token", 0600);  // 只有所有者可读写
+        fprintf(token_file, "%s\n", token);
+        fclose(token_file);
+        printf("✓ IPC 令牌已创建\n");
+    }
     fprintf(f, "dofile(\"%s\")\n", IPC_TOOL);
     fclose(f);
 
@@ -1345,6 +1360,39 @@ static void listen_callback(CFSocketRef s, CFSocketCallBackType type,
 // Lua API: start()
 static int l_start(lua_State *L) {
     log_msg("=== IPC start ===\n");
+    
+    // ⚠️ 验证启动令牌（防止其他脚本调用）
+    FILE *token_file = fopen("/tmp/moho_ipc_token", "r");
+    if (!token_file) {
+        log_msg("✗ 启动拒绝：令牌文件不存在\n");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "启动拒绝：令牌文件不存在");
+        return 2;
+    }
+    
+    char expected_token[128] = "";
+    if (fgets(expected_token, sizeof(expected_token), token_file)) {
+        // 去除换行
+        int len = strlen(expected_token);
+        if (len > 0 && expected_token[len-1] == '\n') expected_token[len-1] = 0;
+    }
+    fclose(token_file);
+    
+    // 检查 Lua 中的令牌
+    lua_getglobal(L, "IPC_START_TOKEN");
+    const char *token = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    
+    if (!token || strcmp(token, expected_token) != 0) {
+        log_msg("✗ 启动拒绝：令牌验证失败\n");
+        log_msg("  期望: %s\n", expected_token);
+        log_msg("  收到: %s\n", token ? token : "(null)");
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "启动拒绝：令牌验证失败");
+        return 2;
+    }
+    
+    log_msg("✓ 令牌验证通过\n");
 
     // 保存 lua_State
     g_L = L;
