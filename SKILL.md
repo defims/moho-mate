@@ -2,7 +2,7 @@
 name: moho-mate
 description: Moho 动画软件命令行自动化工具。触发词:moho-mate、Moho 渲染、Moho 脚本、Lua 脚本执行、Moho IPC。
 moho_version: Moho Pro 14.3
-skill_version: 2026.05.30-v15.0
+skill_version: 2026.06.01-v16.0
 ---
 
 # Moho Mate
@@ -327,41 +327,9 @@ scripts/IPCFileSaveAs.lua         -- IPC 保存文件模块
 
 ---
 
-## playback 播放控制 ✨ NEW
+## 播放控制 API（Lua）
 
-**命令行播放动画预览（IPC 模式）**
-
-### 用法
-
-```bash
-moho-mate playback play [start] [end] [fps]  # 播放
-moho-mate playback play                       # 使用项目帧范围播放
-moho-mate playback pause                     # 暂停/恢复
-moho-mate playback stop                      # 停止
-moho-mate playback seek <frame>              # 跳转
-moho-mate playback status                    # 状态
-```
-
-### 示例
-
-```bash
-# 播放项目帧范围（自动获取 StartFrame/EndFrame/Fps）
-moho-mate playback play
-
-# 指定帧范围播放
-moho-mate playback play 0 72 24
-
-# 暂停
-moho-mate playback pause
-
-# 跳转到帧 36
-moho-mate playback seek 36
-
-# 查看状态
-moho-mate playback status
-```
-
-### Lua API
+**IPC 模式播放控制（仅 Lua API）**
 
 ```lua
 local ipc = require('moho_ipc')
@@ -503,7 +471,7 @@ moho-mate inspect project.moho
 | `inspect <project>` | 查看项目信息 |
 | `config list/backup/restore` | 配置管理 |
 | `encode <input> <output> [options]` | PNG 序列合成视频 ✨ NEW |
-| `playback <action> [args]` | 播放控制 ✨ NEW |
+
 
 ### encode 参数（使用 Moho 内置 FFmpeg，无需额外依赖）✨ NEW
 

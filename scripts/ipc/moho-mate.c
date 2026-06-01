@@ -546,7 +546,21 @@ static int cmd_encode(int argc, char **argv) {
     int is_gif = (strstr(output, ".gif") != NULL);
     int is_apng = (strstr(output, ".apng") != NULL);
     
+    // APNG 实际输出路径（标准后缀是 .png）
+    char actual_output[512];
+    strncpy(actual_output, output, sizeof(actual_output) - 1);
+    actual_output[sizeof(actual_output) - 1] = '\0';
+    
     if (is_apng) {
+        // APNG 标准后缀是 .png
+        size_t len = strlen(actual_output);
+        if (len > 5 && strcmp(actual_output + len - 5, ".apng") == 0) {
+            actual_output[len - 5] = '.';
+            actual_output[len - 4] = 'p';
+            actual_output[len - 3] = 'n';
+            actual_output[len - 2] = 'g';
+            actual_output[len - 1] = '\0';
+        }
         printf("▶ 编码 APNG（动画 PNG，无损 + 透明）\n");
     } else if (is_gif) {
         printf("▶ 编码 GIF（libavfilter 调色板优化）\n");
@@ -554,18 +568,43 @@ static int cmd_encode(int argc, char **argv) {
         printf("▶ 编码 MP4（内置 FFmpeg）\n");
     }
     printf("  输入: %s\n", input);
-    printf("  输出: %s\n", output);
+    if (is_apng && strcmp(output, actual_output) != 0) {
+        printf("  输出: %s（APNG 使用标准 PNG 后缀）\n", actual_output);
+    } else {
+        printf("  输出: %s\n", output);
+    }
     printf("  帧率: %d fps\n", fps);
     
     auto_start_ipc();
     
-    // 发送编码命令
+    // 发送编码命令（同步等待完成）
     char lua_cmd[CMD_SIZE];
     snprintf(lua_cmd, sizeof(lua_cmd),
         "local ipc = require('moho_ipc')\n"
         "local ok, err = ipc.encode_video(\"%s\", \"%s\", %d, %d, \"mpeg4\")\n"
-        "if ok then print('✓ 编码完成') else print('✗ 编码失败: ' .. tostring(err)) end",
-        input, output, fps, crf);
+        "if not ok then\n"
+        "  print('✗ 编码启动失败: ' .. tostring(err))\n"
+        "  return\n"
+        "end\n"
+        "-- 等待编码完成\n"
+        "local max_wait = 300\n"
+        "local waited = 0\n"
+        "while waited < max_wait do\n"
+        "  local s = ipc.encode_status()\n"
+        "  if s.status == 2 then\n"
+        "    print('✓ 编码完成: %s')\n"
+        "    break\n"
+        "  elseif s.status == 3 then\n"
+        "    print('✗ 编码失败: ' .. tostring(s.error_msg))\n"
+        "    break\n"
+        "  end\n"
+        "  os.execute('sleep 1')\n"
+        "  waited = waited + 1\n"
+        "end\n"
+        "if waited >= max_wait then\n"
+        "  print('✗ 编码超时')\n"
+        "end",
+        input, output, fps, crf, actual_output);
     
     return ipc_send_multiline(lua_cmd);
 }
@@ -639,8 +678,27 @@ static int cmd_render(int argc, char **argv) {
     char lua_cmd[CMD_SIZE];
     char output_path[512];
     
+    // 视频格式：确保输出路径有正确后缀
     if (output) {
         snprintf(output_path, sizeof(output_path), "%s", output);
+        // 检查是否需要添加后缀
+        if (is_video) {
+            size_t len = strlen(output_path);
+            int has_suffix = 0;
+            if (strcmp(format, "GIF") == 0 && len > 4 && strcmp(output_path + len - 4, ".gif") == 0) has_suffix = 1;
+            if (strcmp(format, "MP4") == 0 && len > 4 && strcmp(output_path + len - 4, ".mp4") == 0) has_suffix = 1;
+            if (strcmp(format, "APNG") == 0 && (len > 5 && strcmp(output_path + len - 5, ".apng") == 0 || len > 4 && strcmp(output_path + len - 4, ".png") == 0)) has_suffix = 1;
+            if (strcmp(format, "QT") == 0 && len > 4 && strcmp(output_path + len - 4, ".mov") == 0) has_suffix = 1;
+            
+            if (!has_suffix) {
+                // 自动添加后缀
+                const char *suffix = strcmp(format, "APNG") == 0 ? ".png" : 
+                                     strcmp(format, "QT") == 0 ? ".mov" : 
+                                     strcmp(format, "GIF") == 0 ? ".gif" : ".mp4";
+                snprintf(output_path + len, sizeof(output_path) - len, "%s", suffix);
+                printf("  输出路径已修正: %s\n", output_path);
+            }
+        }
     } else {
         // 从项目名生成输出名
         char *base = strrchr(project, '/');
@@ -687,7 +745,7 @@ static int cmd_render(int argc, char **argv) {
         "  local frame_path = output_dir .. \"/frame_\" .. string.format(\"%%05d\", f) .. \".%s\"\n"
         "  moho:FileRender(frame_path)\n"
         "end\n"
-        "print('✓ PNG 渲染完成: ' .. (%d - %d + 1) .. ' 帧')",
+        "print('✓ 渲染完成: ' .. (%d - %d + 1) .. ' 帧')",
         png_dir, start_frame, end_frame, ext, end_frame, start_frame);
     
     int ret = ipc_send_multiline(lua_cmd);
@@ -699,7 +757,7 @@ static int cmd_render(int argc, char **argv) {
     
     // 视频格式：调用 encode 编码
     if (is_video) {
-        printf("✓ PNG 序列已保存到: %s\n", png_dir);
+        printf("✓ 序列已保存到: %s\n", png_dir);
         
         // 根据格式选择编码器
         const char *codec = "mpeg4";
@@ -717,24 +775,42 @@ static int cmd_render(int argc, char **argv) {
         
         printf("▶ 编码 %s: %s\n", format, output_path);
         
-        char encode_cmd[1024];
+        // Lua 脚本：同步等待编码完成
+        char encode_cmd[2048];
         snprintf(encode_cmd, sizeof(encode_cmd),
             "local ipc = require('moho_ipc')\n"
             "local input = \"%s/frame_%%05d.png\"\n"
             "local output = \"%s\"\n"
             "local fps = 24\n"
             "local ok, err = ipc.encode_video(input, output, fps, 23, \"%s\")\n"
-            "if ok then\n"
-            "  print('✓ 编码完成: ' .. output)\n"
-            "else\n"
-            "  print('✗ 编码失败: ' .. tostring(err))\n"
+            "if not ok then\n"
+            "  print('✗ 编码启动失败: ' .. tostring(err))\n"
+            "  return\n"
+            "end\n"
+            "-- 同步等待编码完成（最多 300 秒）\n"
+            "local max_wait = 300\n"
+            "local waited = 0\n"
+            "while waited < max_wait do\n"
+            "  local s = ipc.encode_status()\n"
+            "  if s.status == 2 then\n"
+            "    print('✓ 编码完成: ' .. output)\n"
+            "    break\n"
+            "  elseif s.status == 3 then\n"
+            "    print('✗ 编码失败: ' .. tostring(s.error_msg))\n"
+            "    break\n"
+            "  end\n"
+            "  os.execute('sleep 1')\n"
+            "  waited = waited + 1\n"
+            "  if waited %% 10 == 0 then\n"
+            "    print('  等待 ' .. waited .. ' 秒...')\n"
+            "  end\n"
+            "end\n"
+            "if waited >= max_wait then\n"
+            "  print('✗ 编码超时')\n"
             "end",
             png_dir, output_path, codec);
         
         ret = ipc_send_multiline(encode_cmd);
-        
-        // 等待编码完成
-        sleep(2);
         
         // 清理临时 PNG
         printf("▶ 清理临时帧...\n");
@@ -742,11 +818,15 @@ static int cmd_render(int argc, char **argv) {
         snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf \"%s\"", png_dir);
         system(cleanup_cmd);
         
-        if (ret == 0) {
+        // 检查输出文件是否存在
+        if (access(output_path, F_OK) == 0) {
             printf("✓ 视频已保存到: %s\n", output_path);
+        } else {
+            fprintf(stderr, "✗ 输出文件不存在: %s\n", output_path);
+            ret = 1;
         }
     } else {
-        printf("✓ PNG 序列已保存到: %s\n", output_path);
+        printf("✓ 序列已保存到: %s\n", output_path);
     }
     
     return ret;
@@ -2499,6 +2579,12 @@ static int l_encode_video(lua_State *L) {
     int crf = luaL_optinteger(L, 4, 23);
     const char *codec = luaL_optstring(L, 5, "mpeg4");
 
+    // 如果上次编码已完成，重置状态
+    if (g_encode_status == 2 || g_encode_status == 3) {
+        g_encode_status = 0;  // idle
+        log_msg("[encode] 重置上次编码状态\n");
+    }
+    
     if (g_encode_status == 1) {
         lua_pushboolean(L, 0);
         lua_pushstring(L, "编码正在进行中");
