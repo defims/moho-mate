@@ -898,10 +898,10 @@ static int cmd_draw(int argc, char **argv) {
     auto_start_ipc();
 
     // 使用 draw_ipc.lua 脚本(不保存)
+    // IPC_DIR 指向 scripts/ipc/，相对路径 ../draw_ipc.lua
     char lua_cmd[256];
     snprintf(lua_cmd, sizeof(lua_cmd),
-        "local home = os.getenv('HOME')\n"
-        "dofile(home .. '/.openclaw/workspace/skills/moho-mate/scripts/draw_ipc.lua')\n"
+        "dofile(IPC_DIR .. '/../draw_ipc.lua')\n"
         "draw_shape('%s')", shape);
 
     printf("▶ IPC 绘制中...\n");
