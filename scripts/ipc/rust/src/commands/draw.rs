@@ -23,7 +23,7 @@ draw_shape('{}')"#,
         shape
     );
 
-    client.send_multiline(&draw_lua).await?;
+    client.send_auto(&draw_lua).await?;
 
     println!("✓ 已绘制 {}，请手动保存", shape);
 
