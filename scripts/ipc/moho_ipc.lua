@@ -1,8 +1,8 @@
 -- moho_ipc.lua - Moho IPC 初始化脚本
--- 版本: 1.0.0
+-- 版本: 2.0.0 (Rust 统一版)
 -- 功能: IPC Socket 服务 + FFmpeg 视频编码
 
-local VERSION = "1.0.0"
+local VERSION = "2.0.0"
 
 -- 变量由 moho-mate start 命令设置
 IPC_DIR = IPC_DIR or "$IPC_DIR"
@@ -27,57 +27,57 @@ local function log_clear()
     if f then f:close() end
 end
 
--- ===== IPC 命令执行 (C 实现) =====
--- execute_via_helper 在 moho_ipc.c 中直接实现
--- moho_ipc.quit() 在 moho_ipc.c 中直接实现
-
 -- ===== 主入口 =====
 function MohoScript(moho)
     log_clear()
-    log("=== IPC v" .. VERSION .. " ===")
+    log("=== IPC v" .. VERSION .. " (Rust 统一版) ===")
 
     -- ⚠️ 验证启动令牌（只有 moho-mate 创建的 wrapper.lua 才能启动）
-    local IPC_START_TOKEN = IPC_START_TOKEN or ""
-    if IPC_START_TOKEN == "" or IPC_START_TOKEN == "$IPC_START_TOKEN" then
+    local token = IPC_START_TOKEN or ""
+    if token == "" or token == "$IPC_START_TOKEN" then
         log("✗ 启动拒绝：缺少启动令牌")
         log("⚠️ 只有 moho-mate 创建的 wrapper.lua 才能启动 IPC")
         return
     end
-    
+
     -- 读取令牌文件验证
     local token_file = io.open("/tmp/moho_ipc_token", "r")
     if not token_file then
         log("✗ 启动拒绝：令牌文件不存在")
         return
     end
-    
+
     local expected_token = token_file:read("*l")
     token_file:close()
-    
+
     if IPC_START_TOKEN ~= expected_token then
         log("✗ 启动拒绝：令牌验证失败")
         log("  期望: " .. tostring(expected_token))
         log("  收到: " .. tostring(IPC_START_TOKEN))
         return
     end
-    
+
     log("✓ 启动令牌验证通过")
 
-    -- 加载 IPC 模块
+    -- 加载 IPC 模块（从 moho-mate 可执行文件）
+    -- Rust 版本：可执行文件静态链接 Lua，可被 dlopen 加载
     local exe_path = IPC_DIR .. "/moho-mate"
+
+    -- ⚠️ macOS: 可执行文件可以被 dlopen 加载（需要 -Wl,-export_dynamic）
     package.cpath = exe_path .. ";" .. package.cpath
     package.loaded["moho_ipc"] = nil
 
     local ok, ipc_module = pcall(require, "moho_ipc")
     if not ok then
         log("✗ 模块加载失败: " .. tostring(ipc_module))
+        log("  尝试路径: " .. exe_path)
         return
     end
-    
+
     -- ⚠️ 立即从 package.loaded 删除（防止其他脚本 require）
     package.loaded["moho_ipc"] = nil
-    log("✓ 模块已加载并隔离（package.loaded 已清除）: " .. exe_path)
-    
+    log("✓ 模块已加载并隔离（package.loaded 已清除）")
+
     -- 存到 registry（给 C 的 execute_via_helper 用）
     local registry = debug.getregistry()
     registry._ipc_module = ipc_module

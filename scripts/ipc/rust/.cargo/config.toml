@@ -1,0 +1,7 @@
+# 编译为 MH_BUNDLE（Lua 模块）
+# 使用 dynamic_lookup 让 Moho 提供 Lua 符号
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-undefined",
+    "-C", "link-arg=dynamic_lookup",
+]
