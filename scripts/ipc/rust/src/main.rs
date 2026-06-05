@@ -25,14 +25,12 @@ use std::ptr;
 
 mod lua_ffi;
 mod ipc_core;
-mod encode_builtin;
 mod encode_native;
 
 use lua_ffi::*;
 use ipc_core::*;
 
 #[cfg(feature = "ffmpeg-builtin")]
-use encode_builtin;
 
 // ========== Lua 模块入口点 ==========
 

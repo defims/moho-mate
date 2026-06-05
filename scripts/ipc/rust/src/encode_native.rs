@@ -7,13 +7,13 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use tracing::info;
 
-#[cfg(feature = "rusty_ffmpeg")]
+#[cfg(feature = "ffmpeg-builtin")]
 use rusty_ffmpeg::ffi as av;
 
 // FFmpeg 常量（rusty_ffmpeg 直接导出）
-#[cfg(feature = "rusty_ffmpeg")]
+#[cfg(feature = "ffmpeg-builtin")]
 use av::{AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_GIF, AV_CODEC_ID_PNG, AV_CODEC_ID_MPEG4, AV_CODEC_ID_APNG};
-#[cfg(feature = "rusty_ffmpeg")]
+#[cfg(feature = "ffmpeg-builtin")]
 use av::{AV_PIX_FMT_PAL8, AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P};
 
 /// 检查 Moho 内置 FFmpeg 库是否可用
@@ -35,7 +35,7 @@ pub fn check_avfilter_available() -> bool {
     Path::new("/Users/def/.openclaw/workspace/skills/moho-mate/scripts/libavfilter.10.dylib").exists()
 }
 
-#[cfg(feature = "rusty_ffmpeg")]
+#[cfg(feature = "ffmpeg-builtin")]
 pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
     use std::ffi::CString;
     use std::ptr;
@@ -308,12 +308,12 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
     }
 }
 
-#[cfg(not(feature = "rusty_ffmpeg"))]
+#[cfg(not(feature = "ffmpeg-builtin"))]
 pub fn encode_gif_with_palette(_input: &str, _output: &str, _fps: i32) -> anyhow::Result<()> {
     anyhow::bail!("rusty_ffmpeg feature 未启用，请使用: cargo build --features rusty_ffmpeg")
 }
 
-#[cfg(feature = "rusty_ffmpeg")]
+#[cfg(feature = "ffmpeg-builtin")]
 pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Result<()> {
     use std::ffi::CString;
     use std::ptr;
@@ -501,12 +501,12 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
     }
 }
 
-#[cfg(not(feature = "rusty_ffmpeg"))]
+#[cfg(not(feature = "ffmpeg-builtin"))]
 pub fn encode_mp4(_input: &str, _output: &str, _fps: i32, _crf: i32) -> anyhow::Result<()> {
     anyhow::bail!("rusty_ffmpeg feature 未启用，请使用: cargo build --features rusty_ffmpeg")
 }
 
-#[cfg(feature = "rusty_ffmpeg")]
+#[cfg(feature = "ffmpeg-builtin")]
 pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
     use std::ffi::CString;
     use std::ptr;
@@ -684,7 +684,7 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(not(feature = "rusty_ffmpeg"))]
+#[cfg(not(feature = "ffmpeg-builtin"))]
 pub fn encode_apng(_input: &str, _output: &str, _fps: i32) -> anyhow::Result<()> {
     anyhow::bail!("rusty_ffmpeg feature 未启用，请使用: cargo build --features rusty_ffmpeg")
 }

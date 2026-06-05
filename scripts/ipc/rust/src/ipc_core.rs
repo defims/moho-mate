@@ -748,8 +748,12 @@ fn do_encode(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Result<()
 
     info!("编码格式: {}", output_ext);
 
+    // 调试输出
+    let check_result = crate::encode_native::check_ffmpeg_available();
+    eprintln!("[DEBUG] check_ffmpeg_available: {}", check_result);
+
     // 优先使用内置 FFmpeg（rusty_ffmpeg）
-    if crate::encode_native::check_ffmpeg_available() {
+    if check_result {
         info!("使用 Moho 内置 FFmpeg (rusty_ffmpeg)");
         return crate::encode_native::encode_with_builtin_ffmpeg(input, output, fps, crf);
     }

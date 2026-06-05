@@ -21,13 +21,15 @@ libc = "0.2"
 which = "6"
 
 # FFmpeg 绑定（使用 rusty_ffmpeg 支持 FFmpeg 7.x）
-rusty_ffmpeg = { version = "0.17", optional = true, features = ["ffmpeg7", "link_system_ffmpeg"] }
+# 不使用 link_system_ffmpeg，因为 build.rs 已经手动配置链接路径
+rusty_ffmpeg = { version = "0.17", optional = true, features = ["ffmpeg7"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 不需要 dispatch2，使用自定义 GCD FFI
 
 [features]
 default = []
+ffmpeg-builtin = ["dep:rusty_ffmpeg"]  # 使用 Moho 内置 FFmpeg
 
 [profile.release]
 opt-level = 3
