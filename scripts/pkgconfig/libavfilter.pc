@@ -1,0 +1,10 @@
+prefix=/Users/def/.openclaw/workspace/skills/moho-mate/scripts
+libdir=${prefix}
+includedir=${prefix}/../include
+
+Name: libavfilter
+Description: FFmpeg filter library (moho-mate)
+Version: 10.1.100
+Requires: libavcodec libavformat libavutil libswscale libswresample
+Libs: -L${libdir} -lavfilter.10
+Cflags: -I${includedir}

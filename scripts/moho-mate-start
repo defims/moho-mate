@@ -1,0 +1,141 @@
+#!/bin/bash
+# moho-mate-start - 启动 Moho IPC 服务
+# 包含配置备份/恢复逻辑
+
+set -e
+
+MOHO_CONFIG="$HOME/Library/Preferences/Lost Marble/Moho Pro/14"
+BACKUP_DIR="/tmp/moho_ipc_config_backup"
+SOCKET_PATH="/tmp/moho_ipc.sock"
+TOKEN_FILE="/tmp/moho_ipc_token"
+WRAPPER_PATH="/tmp/moho_wrapper.lua"
+IPC_DIR="/Users/def/.openclaw/workspace/skills/moho-mate/scripts"
+
+# 默认参数
+TIMEOUT=3600
+PROJECT=""
+SCRIPT=""
+
+# 解析参数
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -t|--timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        *.moho)
+            PROJECT="$1"
+            shift
+            ;;
+        *.lua)
+            SCRIPT="$1"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+echo "▶ 启动 IPC 服务"
+echo "  超时: $TIMEOUT 秒"
+[[ -n "$PROJECT" ]] && echo "  项目: $PROJECT"
+[[ -n "$SCRIPT" ]] && echo "  脚本: $SCRIPT"
+
+# 1. 关闭旧 Moho
+echo "关闭旧 Moho..."
+pkill -9 Moho 2>/dev/null || true
+sleep 2
+
+# 2. 删除旧 socket 和 token
+rm -f "$SOCKET_PATH" "$TOKEN_FILE"
+
+# 3. 备份配置 + 清空 Autosave
+echo "备份配置..."
+if [[ -d "$MOHO_CONFIG" ]]; then
+    # 删除旧备份
+    rm -rf "$BACKUP_DIR"
+    # 创建新备份
+    cp -r "$MOHO_CONFIG" "$BACKUP_DIR"
+    echo "✓ 配置已备份"
+    
+    # 清空 Autosave
+    rm -rf "$MOHO_CONFIG/Autosave"/*
+    mkdir -p "$MOHO_CONFIG/Autosave"
+    echo "✓ Autosave 已清空"
+fi
+
+# 4. 生成启动令牌
+TOKEN="${RANDOM}_$$_$(date +%s)"
+echo "$TOKEN" > "$TOKEN_FILE"
+
+# 5. 创建 wrapper.lua
+cat > "$WRAPPER_PATH" << EOF
+IPC_DIR = "$IPC_DIR"
+USER_PROJECT = "$PROJECT"
+USER_SCRIPT = "$SCRIPT"
+IPC_TIMEOUT = $TIMEOUT
+IPC_START_TOKEN = "$TOKEN"
+dofile("$IPC_DIR/ipc/moho_ipc.lua")
+EOF
+
+echo "✓ wrapper.lua 已创建"
+
+# 6. 用 open -a Moho --args 启动
+echo "启动 Moho..."
+open -a Moho --args "$WRAPPER_PATH"
+
+# 7. 等待 IPC 就绪
+echo "等待 IPC 就绪..."
+MAX_WAIT=30
+WAIT_COUNT=0
+
+while [[ $WAIT_COUNT -lt $MAX_WAIT ]]; do
+    if [[ -S "$SOCKET_PATH" ]]; then
+        sleep 0.5
+        # 尝试连接测试
+        if echo "print('ipc_ready')" | nc -U "$SOCKET_PATH" >/dev/null 2>&1; then
+            echo ""
+            echo "✓ IPC 服务已就绪: $SOCKET_PATH"
+            echo "  超时: $TIMEOUT 秒"
+            
+            # 8. IPC 就绪后立即恢复配置
+            echo "恢复配置..."
+            if [[ -d "$BACKUP_DIR" ]]; then
+                # 删除当前 Autosave
+                rm -rf "$MOHO_CONFIG/Autosave"
+                # 从备份恢复 Autosave
+                if [[ -d "$BACKUP_DIR/Autosave" ]]; then
+                    cp -r "$BACKUP_DIR/Autosave" "$MOHO_CONFIG/"
+                else
+                    mkdir -p "$MOHO_CONFIG/Autosave"
+                fi
+                echo "✓ 配置已恢复"
+            fi
+            
+            echo ""
+            echo "发送命令: moho-mate call '<lua>'"
+            exit 0
+        fi
+    fi
+    echo -n "."
+    sleep 1
+    ((WAIT_COUNT++))
+done
+
+echo ""
+echo "⚠️ IPC 启动超时"
+echo "  请检查 Moho 是否正常运行"
+echo "  日志: /tmp/moho_ipc.log"
+
+# 超时时也尝试恢复配置
+if [[ -d "$BACKUP_DIR" ]]; then
+    rm -rf "$MOHO_CONFIG/Autosave"
+    if [[ -d "$BACKUP_DIR/Autosave" ]]; then
+        cp -r "$BACKUP_DIR/Autosave" "$MOHO_CONFIG/"
+    else
+        mkdir -p "$MOHO_CONFIG/Autosave"
+    fi
+fi
+
+exit 1

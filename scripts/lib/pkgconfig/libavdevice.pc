@@ -1,0 +1,10 @@
+prefix=/Applications/Moho.app/Contents/Frameworks
+exec_prefix=${prefix}
+libdir=${exec_prefix}
+includedir=/Users/def/.openclaw/workspace/skills/moho-mate/scripts/include
+
+Name: libavdevice
+Description: FFmpeg device library
+Version: 61.3.104
+Libs: -L${libdir} -lavdevice
+Cflags: -I${includedir}

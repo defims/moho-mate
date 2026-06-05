@@ -2,7 +2,7 @@
 name: moho-mate
 description: Moho 动画软件命令行自动化工具。触发词:moho-mate、Moho 渲染、Moho 脚本、Lua 脚本执行、Moho IPC。
 moho_version: Moho Pro 14.3
-skill_version: 2026.06.01-v16.0
+skill_version: 2026.06.04-v18.0
 ---
 
 # Moho Mate
@@ -35,33 +35,32 @@ macOS 命令行工具,自动化 Moho Pro 14 操作。
 
 ### IPC 配置自动备份/恢复
 
-**机制**：IPC 启动前备份用户配置，退出后恢复。
+**机制**：IPC 启动前备份用户配置，IPC 就绪后立即恢复。
 
 ```
 IPC 启动:
-  1. 备份 ~/Library/Preferences/Lost Marble/Moho Pro/14/ → /tmp/moho_ipc_config_backup
-  2. 清空 Autosave 目录（防止之前项目污染）
-  3. 写入 /tmp/moho_ipc_backup.pid（标记 IPC 会话）
-  4. 启动 Moho IPC
-
-IPC 退出:
-  5. 检查 /tmp/moho_ipc_backup.pid（确认是 IPC 会话）
-  6. 恢复备份 → 原配置目录
-  7. 清理备份目录和 PID 文件
+  1. 关闭旧 Moho
+  2. 备份 ~/Library/Preferences/Lost Marble/Moho Pro/14/ → /tmp/moho_ipc_config_backup
+  3. 清空 Autosave 目录（防止之前项目污染）
+  4. 创建 wrapper.lua + 启动令牌
+  5. open -a Moho --args wrapper.lua
+  6. 等待 IPC socket 创建
+  7. ✓ IPC 就绪 → 立即恢复 Autosave 配置
 ```
 
 **关键点**：
-- 使用固定目录名 `/tmp/moho_ipc_config_backup`（不区分 PID）
-- PID 文件 `/tmp/moho_ipc_backup.pid` 标记 IPC 会话
-- `quit` 会恢复配置后再退出
+- 必须清空 Autosave，否则 Moho 启动时加载旧工程，MohoScript 不会被调用
+- 必须用 `open -a Moho --args` 启动，直接运行二进制文件会崩溃
+- IPC 就绪后**立即恢复**配置，让用户下次正常启动 Moho 不受影响
+- 启动令牌验证，防止其他脚本意外启动 IPC
 
-**手动管理**（可选）:
+**启动命令**：
 ```bash
-# 手动备份
-moho-mate config backup
+# 使用新的启动脚本（包含备份/恢复逻辑）
+~/.openclaw/workspace/skills/moho-mate/scripts/moho-mate-start [project.moho] [script.lua] [--timeout 3600]
 
-# 手动恢复
-moho-mate config restore
+# 或使用 Rust 版本（已集成此逻辑）
+moho-mate start [project.moho] [script.lua] --timeout 3600
 ```
 
 ### encode 视频编码

@@ -1,0 +1,10 @@
+prefix=/Applications/Moho.app/Contents/Frameworks
+exec_prefix=${prefix}
+libdir=${exec_prefix}
+includedir=/Users/def/.openclaw/workspace/skills/moho-mate/scripts/include
+
+Name: libswscale
+Description: FFmpeg image scaling library
+Version: 8.2.100
+Libs: -L${libdir} -lswscale
+Cflags: -I${includedir}

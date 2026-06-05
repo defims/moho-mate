@@ -1,0 +1,10 @@
+prefix=/Applications/Moho.app/Contents/Frameworks
+exec_prefix=${prefix}
+libdir=${exec_prefix}
+includedir=/Users/def/.openclaw/workspace/skills/moho-mate/scripts/include
+
+Name: libavutil
+Description: FFmpeg utility library
+Version: 59.20.100
+Libs: -L${libdir} -lavutil
+Cflags: -I${includedir}

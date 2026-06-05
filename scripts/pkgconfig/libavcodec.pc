@@ -1,0 +1,10 @@
+prefix=/Applications/Moho.app/Contents/Frameworks
+libdir=${prefix}
+includedir=/Users/def/.openclaw/workspace/skills/moho-mate/include
+
+Name: libavcodec
+Description: FFmpeg codec library (Moho bundled)
+Version: 61.3.100
+Requires: libavutil
+Libs: -L${libdir} -lavcodec.61
+Cflags: -I${includedir}

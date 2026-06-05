@@ -1,8 +1,8 @@
 -- moho_ipc.lua - Moho IPC 初始化脚本
--- 版本: 2.0.0 (Rust 统一版)
--- 功能: IPC Socket 服务 + FFmpeg 视频编码
+-- 版本: 2.1.0 (方案A: GUI 命令队列)
+-- 功能: IPC Socket 服务 + GUI 命令队列 + FFmpeg 视频编码
 
-local VERSION = "2.0.0"
+local VERSION = "2.1.0"
 
 -- 变量由 moho-mate start 命令设置
 IPC_DIR = IPC_DIR or "$IPC_DIR"
@@ -102,6 +102,31 @@ function MohoScript(moho)
 
     _G.moho = moho
     log("✓ moho 已就绪")
+    
+    -- 启动 GUI Executor（方案A）
+    local gui_executor_path = IPC_DIR .. "/gui_executor.lua"
+    local ok, gui_executor = pcall(dofile, gui_executor_path)
+    if ok and gui_executor then
+        log("✓ GUI Executor 模块已加载")
+        
+        -- 初始化 GUI 队列
+        if ipc.init_gui_queue then
+            ipc.init_gui_queue()
+        end
+        
+        -- 启动定时器轮询（100ms 间隔）
+        local timer_ok, timer = pcall(function()
+            return gui_executor.start_poller(moho, 100)
+        end)
+        
+        if timer_ok then
+            log("✓ GUI Executor 定时器已启动")
+        else
+            log("⚠ GUI Executor 定时器启动失败: " .. tostring(timer))
+        end
+    else
+        log("⚠ GUI Executor 模块加载失败")
+    end
 
     -- 执行用户脚本
     if USER_SCRIPT and USER_SCRIPT ~= "" then

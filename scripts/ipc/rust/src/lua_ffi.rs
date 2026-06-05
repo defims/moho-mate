@@ -95,6 +95,12 @@ extern "C" {
 
 // ========== Lua 5.4 兼容宏 ==========
 
+/// lua_pop 是宏，定义为 lua_settop(L, -(n)-1)
+#[inline]
+pub unsafe fn lua_pop(L: lua_State, n: c_int) {
+    lua_settop(L, -(n) - 1);
+}
+
 /// lua_pcall 是宏，实际调用 lua_pcallk
 #[inline]
 pub unsafe fn lua_pcall(L: lua_State, nargs: c_int, nresults: c_int, errfunc: c_int) -> c_int {

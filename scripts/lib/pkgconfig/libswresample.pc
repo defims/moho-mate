@@ -1,0 +1,10 @@
+prefix=/Applications/Moho.app/Contents/Frameworks
+exec_prefix=${prefix}
+libdir=${exec_prefix}
+includedir=/Users/def/.openclaw/workspace/skills/moho-mate/scripts/include
+
+Name: libswresample
+Description: FFmpeg audio resampling library
+Version: 5.2.100
+Libs: -L${libdir} -lswresample
+Cflags: -I${includedir}

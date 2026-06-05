@@ -1,0 +1,10 @@
+prefix=/Applications/Moho.app/Contents/Frameworks
+exec_prefix=${prefix}
+libdir=${exec_prefix}
+includedir=/Users/def/.openclaw/workspace/skills/moho-mate/scripts/include
+
+Name: libavformat
+Description: FFmpeg format library
+Version: 61.3.104
+Libs: -L${libdir} -lavformat
+Cflags: -I${includedir}
