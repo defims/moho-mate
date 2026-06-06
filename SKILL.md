@@ -30,8 +30,9 @@ macOS 命令行工具,自动化 Moho Pro 14 操作。
    - `moho-mate quit` - 命令行退出
    - 不退出 - Moho 保持运行,可查看结果
 3. **⚠️ IPC 脚本禁止 `moho:Quit()` → 文件损坏**
-4. **⚠️ 所有 API 调用必须先查文档** → `/Applications/Moho.app/.../Lua Interfaces`
-5. **⚠️ IPC 自动备份/恢复配置**（防止 autosave 污染）
+4. **⚠️ FileOpen 前必须检查文件存在** → 文件不存在会弹 GUI 阻塞 IPC
+5. **⚠️ 所有 API 调用必须先查文档** → `/Applications/Moho.app/.../Lua Interfaces`
+6. **⚠️ IPC 自动备份/恢复配置**（防止 autosave 污染）
 
 ### IPC 配置自动备份/恢复
 
@@ -600,7 +601,20 @@ local shape = mesh:Shape(0)  -- 获取形状
 | `DuplicateLayer(layer)` | 复制图层 ✅ |
 | `DeleteLayer(layer)` | 删除图层 |
 | `FileNew()` | 新建文档 |
-| `FileOpen(path)` | 打开文档 |
+| `FileOpen(path)` | 打开文档 ⚠️ 文件不存在会弹 GUI |
+
+**⚠️ FileOpen 必须先检查文件存在：**
+```lua
+local path = "/path/to/project.moho"
+local file = io.open(path, "r")
+if file then
+    file:close()
+    moho:FileOpen(path)
+else
+    print("ERROR: 文件不存在: " .. path)
+    return
+end
+```
 | `FileSave()` | 保存 |
 | `FileSaveAs(path)` | 另存为 |
 | `FileImport(path, mode)` | 导入 Moho/Anime 文件 ⚠️ 弹 GUI |
