@@ -1,5 +1,5 @@
 # FFmpeg 源码头文件（build.rs 自动下载）
-scripts/ipc/rust/ffmpeg-headers/
+scripts/rust/ffmpeg-headers/
 
 # 编译输出
-scripts/ipc/rust/target/
+scripts/rust/target/
