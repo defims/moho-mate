@@ -36,8 +36,12 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=swscale.8");
         println!("cargo:rustc-link-lib=dylib=swresample.5");
         
+        // 设置 LC_RPATH，让二进制能找到 Moho 的 FFmpeg 库
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", moho_fw);
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", scripts_dir);
+        
+        // 使用 @rpath 替代 @executable_path，这样运行时会在 rpath 中搜索
+        // macOS 默认使用 @executable_path/../Frameworks，需要改成 @rpath
+        println!("cargo:rustc-link-arg=-Wl,-headerpad_max_install_names");
     }
     
     // 生成 FFmpeg FFI 绑定（可选，仅在 ffmpeg-builtin feature 且 bindgen 可用时）

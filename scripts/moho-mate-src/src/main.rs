@@ -64,11 +64,21 @@ unsafe fn reg_func(L: lua_State, name: &str, func: unsafe extern "C" fn(lua_Stat
     lua_settable(L, -3);
 }
 
+/// 从 Lua 栈获取字符串
+unsafe fn get_string(L: lua_State, idx: c_int) -> String {
+    let s = luaL_checklstring(L, idx, std::ptr::null_mut());
+    if s.is_null() {
+        String::new()
+    } else {
+        std::ffi::CStr::from_ptr(s).to_string_lossy().to_string()
+    }
+}
+
 // ========== Lua 函数实现 ==========
 
 /// start() -> (running, path)
 unsafe extern "C" fn l_start(L: lua_State) -> c_int {
-    let (running, path) = ipc_start(L);
+    let (running, path) = ipc_start(L, None);
     lua_pushboolean(L, if running { 1 } else { 0 });
     push_string(L, &path);
     2
@@ -343,6 +353,7 @@ fn cmd_start(project: Option<&str>, script: Option<&str>, timeout: u32) -> Resul
     // 2. 删除旧 socket
     let _ = std::fs::remove_file("/tmp/moho_ipc.sock");
     let _ = std::fs::remove_file("/tmp/moho_ipc_token");
+    let _ = std::fs::remove_file("/tmp/moho_ipc_owner");
 
     // 3. 备份配置 + 清空 Autosave
     backup_moho_config()?;
@@ -422,11 +433,20 @@ fn cmd_start(project: Option<&str>, script: Option<&str>, timeout: u32) -> Resul
     Ok(())
 }
 
+/// Moho 配置目录（macOS: ~/Library/Preferences/Lost Marble/Moho Pro/14）
+/// 注意：dirs crate 在 macOS 上返回 Application Support 而非 Preferences
+fn moho_config_dir() -> Result<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 环境变量"))?;
+    let config_dir = std::path::PathBuf::from(home)
+        .join("Library/Preferences/Lost Marble/Moho Pro/14");
+    Ok(config_dir)
+}
+
 /// 备份 Moho 配置
 fn backup_moho_config() -> Result<()> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| anyhow::anyhow!("无法获取配置目录"))?
-        .join("Lost Marble/Moho Pro/14");
+    // macOS: ~/Library/Preferences/Lost Marble/Moho Pro/14/
+    let config_dir = moho_config_dir()?;
 
     if !config_dir.exists() {
         info!("配置目录不存在，跳过备份");
@@ -446,10 +466,20 @@ fn backup_moho_config() -> Result<()> {
 
     // 清空 Autosave 目录（防止之前项目污染）
     let autosave_dir = config_dir.join("Autosave");
+    info!("Autosave 目录: {:?}", autosave_dir);
     if autosave_dir.exists() {
-        std::fs::remove_dir_all(&autosave_dir)?;
-        std::fs::create_dir_all(&autosave_dir)?;
+        info!("开始删除 Autosave...");
+        if let Err(e) = std::fs::remove_dir_all(&autosave_dir) {
+            info!("删除失败: {}", e);
+        } else {
+            info!("删除成功");
+        }
+        if let Err(e) = std::fs::create_dir_all(&autosave_dir) {
+            info!("创建失败: {}", e);
+        }
         info!("Autosave 已清空");
+    } else {
+        info!("Autosave 目录不存在");
     }
 
     Ok(())
@@ -457,9 +487,7 @@ fn backup_moho_config() -> Result<()> {
 
 /// 恢复 Moho 配置
 fn restore_moho_config() -> Result<()> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| anyhow::anyhow!("无法获取配置目录"))?
-        .join("Lost Marble/Moho Pro/14");
+    let config_dir = moho_config_dir()?;
     
     let backup_dir = std::path::PathBuf::from("/tmp/moho_ipc_config_backup");
     

@@ -138,11 +138,177 @@ mod cf {
 const SOCKET_PATH: &str = "/tmp/moho_ipc.sock";
 const LOG_FILE: &str = "/tmp/moho_ipc.log";
 
+// ========== 调用者验证 (macOS) ==========
+#[cfg(target_os = "macos")]
+mod peercred {
+    use std::os::raw::c_int;
+    use std::ffi::c_void;
+    
+    // macOS 的 LOCAL_PEERPID 定义
+    pub const LOCAL_PEERPID: c_int = 0x002;
+    
+    // xucred 结构（简化版）
+    #[repr(C)]
+    pub struct xucred {
+        pub cr_version: u_int,
+        pub cr_uid: uid_t,
+        pub cr_ngroups: libc::c_short,
+        pub cr_groups: [gid_t; 16],
+        pub _cr_unused: *mut c_void,
+    }
+    
+    pub type u_int = c_int;
+    pub type uid_t = u32;
+    pub type gid_t = u32;
+    
+    extern "C" {
+        pub fn getsockopt(
+            socket: c_int,
+            level: c_int,
+            optname: c_int,
+            optval: *mut c_void,
+            optlen: *mut u32,
+        ) -> c_int;
+        
+        // macOS 获取进程路径
+        pub fn proc_pidpath(pid: c_int, buffer: *mut i8, buffersize: u32) -> c_int;
+        
+        // dladdr 获取共享库/可执行文件路径
+        pub fn dladdr(addr: *const c_void, info: *mut Dl_info) -> c_int;
+    }
+    
+    // Dl_info 结构（用于 dladdr）
+    #[repr(C)]
+    pub struct Dl_info {
+        pub dli_fname: *const i8,   // 文件路径
+        pub dli_fbase: *mut c_void, // 基址
+        pub dli_sname: *const i8,   // 符号名
+        pub dli_saddr: *mut c_void, // 符号地址
+    }
+    
+    /// 获取 socket 对端的 PID
+    pub fn get_peer_pid(fd: c_int) -> Option<i32> {
+        unsafe {
+            let mut pid: i32 = 0;
+            let mut len = std::mem::size_of::<i32>() as u32;
+            
+            let ret = getsockopt(
+                fd,
+                libc::SOL_LOCAL,
+                LOCAL_PEERPID,
+                &mut pid as *mut i32 as *mut c_void,
+                &mut len,
+            );
+            
+            if ret == 0 && len == std::mem::size_of::<i32>() as u32 {
+                Some(pid)
+            } else {
+                None
+            }
+        }
+    }
+    
+    /// 获取 PID 对应的可执行文件路径
+    pub fn get_pid_path(pid: i32) -> Option<String> {
+        unsafe {
+            let mut buffer = [0i8; 1024];
+            let ret = proc_pidpath(pid, buffer.as_mut_ptr(), buffer.len() as u32);
+            
+            if ret > 0 {
+                // 找到 null 终止符位置
+                let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+                Some(String::from_utf8_lossy(&buffer[..end].iter().map(|&c| c as u8).collect::<Vec<_>>()).to_string())
+            } else {
+                None
+            }
+        }
+    }
+    
+    /// 获取当前代码所在的文件路径（通过 dladdr）
+    /// 即使被其他进程 dlopen，也能返回原始可执行文件路径
+    pub fn get_module_path() -> Option<String> {
+        unsafe {
+            let mut info: Dl_info = std::mem::zeroed();
+            // 使用当前函数的地址来获取所在文件
+            let ret = dladdr(get_module_path as *const c_void, &mut info);
+            
+            if ret != 0 && !info.dli_fname.is_null() {
+                let cstr = std::ffi::CStr::from_ptr(info.dli_fname);
+                Some(cstr.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// 验证调用者是否是启动 IPC 的 moho-mate
+fn verify_caller(fd: c_int) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // 获取启动者路径
+        let owner_path = match IPC_OWNER_PATH.lock() {
+            Ok(owner) => owner.clone(),
+            Err(_) => {
+                log_msg("✗ 无法获取启动者路径");
+                return false;
+            }
+        };
+        
+        // 未注册则拒绝
+        if owner_path.is_empty() {
+            log_msg("✗ 启动者路径未设置，拒绝连接");
+            return false;
+        }
+        
+        // 获取客户端 PID
+        let peer_pid = match peercred::get_peer_pid(fd) {
+            Some(pid) => pid,
+            None => {
+                log_msg("✗ 无法获取调用者 PID");
+                return false;
+            }
+        };
+        
+        log_msg(&format!("调用者 PID: {}", peer_pid));
+        
+        // 获取客户端可执行路径
+        let peer_path = match peercred::get_pid_path(peer_pid) {
+            Some(path) => path,
+            None => {
+                log_msg("✗ 无法获取调用者路径");
+                return false;
+            }
+        };
+        
+        log_msg(&format!("调用者路径: {}", peer_path));
+        log_msg(&format!("模块路径: {}", owner_path));
+        
+        // 比较路径是否相同
+        if peer_path == owner_path {
+            log_msg("✓ 调用者验证通过");
+            true
+        } else {
+            log_msg(&format!("✗ 拒绝连接: {} != {}", peer_path, owner_path));
+            false
+        }
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        // 非 macOS 平台暂不验证
+        true
+    }
+}
+
 // ========== 全局状态 ==========
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 static ERROR_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// 启动 IPC 的 moho-mate 可执行路径（用于调用者验证）
+static IPC_OWNER_PATH: Mutex<String> = Mutex::new(String::new());
 
 // 编码状态
 pub static ENCODE_STATUS: AtomicI32 = AtomicI32::new(0); // 0=idle, 1=running, 2=success, 3=error
@@ -173,12 +339,26 @@ fn log_msg(msg: &str) {
 // ========== IPC 服务 ==========
 
 /// 启动 IPC 服务
-pub fn ipc_start(L: lua_State) -> (bool, String) {
+/// 自动获取当前模块所在的可执行文件路径作为启动者路径
+pub fn ipc_start(L: lua_State, _owner_path: Option<String>) -> (bool, String) {
     log_msg("=== IPC start ===");
 
     // 保存 Lua state（仅在主线程）
     unsafe {
         LUA_STATE = Some(L);
+    }
+
+    // 通过 dladdr 获取当前模块所在的可执行文件路径
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(module_path) = peercred::get_module_path() {
+            if let Ok(mut owner) = IPC_OWNER_PATH.lock() {
+                *owner = module_path.clone();
+                log_msg(&format!("IPC 模块路径 (dladdr): {}", module_path));
+            }
+        } else {
+            log_msg("⚠ 无法获取模块路径");
+        }
     }
 
     if RUNNING.load(Ordering::SeqCst) {
@@ -328,6 +508,13 @@ extern "C" fn listen_callback(
     // data 指向客户端 fd
     let client_fd = unsafe { *(data as *const c_int) };
     log_msg(&format!("新连接: fd={}", client_fd));
+    
+    // 验证调用者（必须是 moho-mate 本身）
+    if !verify_caller(client_fd) {
+        log_msg("✗ 拒绝连接：调用者验证失败");
+        unsafe { libc::close(client_fd); }
+        return;
+    }
     
     // 关闭旧连接
     cleanup_client_socket();
