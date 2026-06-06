@@ -531,8 +531,16 @@ function MohoScript(moho)
 
     -- 创建/打开项目
     if USER_PROJECT and USER_PROJECT ~= "" then
-        print("[项目] 打开: " .. USER_PROJECT)
-        moho:FileOpen(USER_PROJECT)
+        -- 检查文件是否存在，避免弹出 GUI 阻塞 IPC
+        local file = io.open(USER_PROJECT, "r")
+        if file then
+            file:close()
+            print("[项目] 打开: " .. USER_PROJECT)
+            moho:FileOpen(USER_PROJECT)
+        else
+            print("✗ 文件不存在: " .. USER_PROJECT)
+            return
+        end
     else
         print("[项目] 新建文档")
         moho:FileNew()
@@ -810,7 +818,18 @@ end"#;
     
     // 只有当前项目不是目标项目时才打开
     if !current_project.contains(project_name) {
-        let open_cmd = format!(r#"moho:FileOpen("{}")"#, project);
+        // Lua 脚本：检查文件存在 + FileOpen
+        let open_cmd = format!(
+            r#"local path = "{}"
+local file = io.open(path, "r")
+if file then
+    file:close()
+    moho:FileOpen(path)
+else
+    print('ERROR: 文件不存在: ' .. path)
+end"#,
+            project
+        );
         ipc_send(&open_cmd)?;
         // 等待项目加载
         std::thread::sleep(std::time::Duration::from_millis(500));
