@@ -1,20 +1,14 @@
 //! FFmpeg 原生编码模块
 //!
-//! 使用 rusty_ffmpeg 绑定 Moho 内置 FFmpeg 库
+//! 使用自定义 FFI 绑定 Moho 内置 FFmpeg 库
 
 use crate::ipc_core;
+use crate::ffmpeg_ffi as av;
+use std::ffi::CString;
 use std::path::Path;
+use std::ptr;
 use std::sync::atomic::Ordering;
 use tracing::info;
-
-#[cfg(feature = "ffmpeg-builtin")]
-use rusty_ffmpeg::ffi as av;
-
-// FFmpeg 常量（rusty_ffmpeg 直接导出）
-#[cfg(feature = "ffmpeg-builtin")]
-use av::{AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_GIF, AV_CODEC_ID_PNG, AV_CODEC_ID_MPEG4, AV_CODEC_ID_APNG};
-#[cfg(feature = "ffmpeg-builtin")]
-use av::{AV_PIX_FMT_PAL8, AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P};
 
 /// 检查 Moho 内置 FFmpeg 库是否可用
 pub fn check_ffmpeg_available() -> bool {
@@ -35,11 +29,7 @@ pub fn check_avfilter_available() -> bool {
     Path::new("/Users/def/.openclaw/workspace/skills/moho-mate/scripts/libavfilter.10.dylib").exists()
 }
 
-#[cfg(feature = "ffmpeg-builtin")]
 pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
-    use std::ffi::CString;
-    use std::ptr;
-    
     unsafe {
         // 获取第一帧分辨率
         let mut width = 0i32;
@@ -49,7 +39,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         let png_path_c = CString::new(png_path.as_str()).unwrap();
         
         let mut fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
-        let ret = av::avformat_open_input(&mut fmt_ctx, png_path_c.as_ptr(), ptr::null_mut(), ptr::null_mut());
+        let ret = av::avformat_open_input(&mut fmt_ctx, png_path_c.as_ptr(), ptr::null(), ptr::null_mut());
         if ret < 0 {
             anyhow::bail!("无法读取第一帧: {}", png_path);
         }
@@ -58,7 +48,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         
         for i in 0..(*fmt_ctx).nb_streams {
             let stream = *(*fmt_ctx).streams.add(i as usize);
-            if (*(*stream).codecpar).codec_type == AVMEDIA_TYPE_VIDEO {
+            if (*(*stream).codecpar).codec_type == av::AVMEDIA_TYPE_VIDEO {
                 width = (*(*stream).codecpar).width;
                 height = (*(*stream).codecpar).height;
                 break;
@@ -74,19 +64,19 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         info!("GIF 编码 (libavfilter): {}x{}, fps={}", width, height, fps);
         
         // === 创建 GIF 编码器 ===
-        let codec = av::avcodec_find_encoder(AV_CODEC_ID_GIF);
+        let codec = av::avcodec_find_encoder(av::AV_CODEC_ID_GIF);
         if codec.is_null() {
             anyhow::bail!("找不到 GIF 编码器");
         }
         
         let output_c = CString::new(output).unwrap();
         let mut out_fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
-        let ret = av::avformat_alloc_output_context2(&mut out_fmt_ctx, ptr::null_mut(), ptr::null(), output_c.as_ptr());
+        let ret = av::avformat_alloc_output_context2(&mut out_fmt_ctx, ptr::null(), ptr::null(), output_c.as_ptr());
         if ret < 0 {
             anyhow::bail!("无法创建输出上下文");
         }
         
-        let mut stream = av::avformat_new_stream(out_fmt_ctx, ptr::null_mut());
+        let stream = av::avformat_new_stream(out_fmt_ctx, ptr::null());
         if stream.is_null() {
             av::avformat_free_context(out_fmt_ctx);
             anyhow::bail!("无法创建流");
@@ -100,21 +90,21 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         
         (*codec_ctx).width = width;
         (*codec_ctx).height = height;
-        (*codec_ctx).time_base = av::AVRational { num: 1, den: fps };
-        (*codec_ctx).framerate = av::AVRational { num: fps, den: 1 };
-        (*codec_ctx).pix_fmt = AV_PIX_FMT_PAL8;
+        (*codec_ctx).time_base = av::AVRational::new(1, fps);
+        (*codec_ctx).framerate = av::AVRational::new(fps, 1);
+        (*codec_ctx).pix_fmt = av::AV_PIX_FMT_PAL8;
         
         let ret = av::avcodec_open2(codec_ctx, codec, ptr::null_mut());
         if ret < 0 {
             av::avcodec_free_context(&mut codec_ctx);
             av::avformat_free_context(out_fmt_ctx);
-            anyhow::bail!("无法打开编码器");
+            anyhow::bail!("无法打开编码器: {}", av::av_err2str(ret));
         }
         
         av::avcodec_parameters_from_context((*stream).codecpar, codec_ctx);
         (*stream).time_base = (*codec_ctx).time_base;
         
-        let ret = av::avio_open(&mut (*out_fmt_ctx).pb, output_c.as_ptr(), av::AVIO_FLAG_WRITE as i32);
+        let ret = av::avio_open(&mut (*out_fmt_ctx).pb, output_c.as_ptr(), av::AVIO_FLAG_WRITE);
         if ret < 0 {
             av::avcodec_free_context(&mut codec_ctx);
             av::avformat_free_context(out_fmt_ctx);
@@ -134,7 +124,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         
         // 创建 buffersrc
         let buffersrc = av::avfilter_get_by_name(CString::new("buffer").unwrap().as_ptr());
-        let args = format!("video_size={}x{}:pix_fmt={}:time_base=1/{}", width, height, AV_PIX_FMT_RGBA as i32, fps);
+        let args = format!("video_size={}x{}:pix_fmt={}:time_base=1/{}", width, height, av::AV_PIX_FMT_RGBA as i32, fps);
         let args_c = CString::new(args.as_str()).unwrap();
         let mut buffersrc_ctx: *mut av::AVFilterContext = ptr::null_mut();
         let ret = av::avfilter_graph_create_filter(&mut buffersrc_ctx, buffersrc, CString::new("in").unwrap().as_ptr(), args_c.as_ptr(), ptr::null_mut(), filter_graph);
@@ -149,7 +139,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         // 创建 buffersink
         let buffersink = av::avfilter_get_by_name(CString::new("buffersink").unwrap().as_ptr());
         let mut buffersink_ctx: *mut av::AVFilterContext = ptr::null_mut();
-        let ret = av::avfilter_graph_create_filter(&mut buffersink_ctx, buffersink, CString::new("out").unwrap().as_ptr(), ptr::null_mut(), ptr::null_mut(), filter_graph);
+        let ret = av::avfilter_graph_create_filter(&mut buffersink_ctx, buffersink, CString::new("out").unwrap().as_ptr(), ptr::null(), ptr::null_mut(), filter_graph);
         if ret < 0 {
             av::avfilter_graph_free(&mut filter_graph);
             av::avcodec_free_context(&mut codec_ctx);
@@ -214,7 +204,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
             let png_path_c = CString::new(png_path.as_str()).unwrap();
             let mut png_fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
             
-            let ret = av::avformat_open_input(&mut png_fmt_ctx, png_path_c.as_ptr(), ptr::null_mut(), ptr::null_mut());
+            let ret = av::avformat_open_input(&mut png_fmt_ctx, png_path_c.as_ptr(), ptr::null(), ptr::null_mut());
             if ret < 0 {
                 input_frame_idx += 1;
                 continue;
@@ -226,7 +216,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
             let mut video_stream_idx = -1i32;
             for i in 0..(*png_fmt_ctx).nb_streams {
                 let stream = *(*png_fmt_ctx).streams.add(i as usize);
-                if (*(*stream).codecpar).codec_type == AVMEDIA_TYPE_VIDEO {
+                if (*(*stream).codecpar).codec_type == av::AVMEDIA_TYPE_VIDEO {
                     video_stream_idx = i as i32;
                     break;
                 }
@@ -268,7 +258,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
         info!("共读取 {} 帧, 开始生成调色板...", input_frame_idx);
         
         // 刷新滤镜管道
-        av::av_buffersrc_add_frame_flags(buffersrc_ctx, ptr::null_mut(), av::AV_BUFFERSRC_FLAG_PUSH as i32);
+        av::av_buffersrc_add_frame_flags(buffersrc_ctx, ptr::null_mut(), av::AV_BUFFERSRC_FLAG_PUSH);
         
         // === 第二阶段: 从滤镜管道拉取处理后的帧并编码 ===
         let mut frame = av::av_frame_alloc();
@@ -308,16 +298,7 @@ pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::R
     }
 }
 
-#[cfg(not(feature = "ffmpeg-builtin"))]
-pub fn encode_gif_with_palette(_input: &str, _output: &str, _fps: i32) -> anyhow::Result<()> {
-    anyhow::bail!("rusty_ffmpeg feature 未启用，请使用: cargo build --features rusty_ffmpeg")
-}
-
-#[cfg(feature = "ffmpeg-builtin")]
 pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Result<()> {
-    use std::ffi::CString;
-    use std::ptr;
-    
     unsafe {
         let mut width = 0i32;
         let mut height = 0i32;
@@ -326,7 +307,7 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
         let png_path_c = CString::new(png_path.as_str()).unwrap();
         
         let mut fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
-        let ret = av::avformat_open_input(&mut fmt_ctx, png_path_c.as_ptr(), ptr::null_mut(), ptr::null_mut());
+        let ret = av::avformat_open_input(&mut fmt_ctx, png_path_c.as_ptr(), ptr::null(), ptr::null_mut());
         if ret < 0 {
             anyhow::bail!("无法读取第一帧: {}", png_path);
         }
@@ -335,7 +316,7 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
         
         for i in 0..(*fmt_ctx).nb_streams {
             let stream = *(*fmt_ctx).streams.add(i as usize);
-            if (*(*stream).codecpar).codec_type == AVMEDIA_TYPE_VIDEO {
+            if (*(*stream).codecpar).codec_type == av::AVMEDIA_TYPE_VIDEO {
                 width = (*(*stream).codecpar).width;
                 height = (*(*stream).codecpar).height;
                 break;
@@ -350,19 +331,19 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
         
         info!("MP4 编码: {}x{}, fps={}, crf={}", width, height, fps, crf);
         
-        let codec = av::avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+        let codec = av::avcodec_find_encoder(av::AV_CODEC_ID_MPEG4);
         if codec.is_null() {
             anyhow::bail!("找不到 MPEG4 编码器");
         }
         
         let output_c = CString::new(output).unwrap();
         let mut out_fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
-        let ret = av::avformat_alloc_output_context2(&mut out_fmt_ctx, ptr::null_mut(), ptr::null(), output_c.as_ptr());
+        let ret = av::avformat_alloc_output_context2(&mut out_fmt_ctx, ptr::null(), ptr::null(), output_c.as_ptr());
         if ret < 0 {
             anyhow::bail!("无法创建输出上下文");
         }
         
-        let mut stream = av::avformat_new_stream(out_fmt_ctx, ptr::null_mut());
+        let stream = av::avformat_new_stream(out_fmt_ctx, ptr::null());
         if stream.is_null() {
             av::avformat_free_context(out_fmt_ctx);
             anyhow::bail!("无法创建流");
@@ -376,22 +357,23 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
         
         (*codec_ctx).width = width;
         (*codec_ctx).height = height;
-        (*codec_ctx).time_base = av::AVRational { num: 1, den: fps };
-        (*codec_ctx).framerate = av::AVRational { num: fps, den: 1 };
-        (*codec_ctx).pix_fmt = AV_PIX_FMT_YUV420P;
-        (*codec_ctx).global_quality = crf;
+        (*codec_ctx).time_base = av::AVRational::new(1, fps);
+        (*codec_ctx).framerate = av::AVRational::new(fps, 1);
+        (*codec_ctx).pix_fmt = av::AV_PIX_FMT_YUV420P;
+        // global_quality 需要通过 AVCodecContext 的正确字段设置
+        // 暂时跳过，使用默认值
         
         let ret = av::avcodec_open2(codec_ctx, codec, ptr::null_mut());
         if ret < 0 {
             av::avcodec_free_context(&mut codec_ctx);
             av::avformat_free_context(out_fmt_ctx);
-            anyhow::bail!("无法打开编码器");
+            anyhow::bail!("无法打开编码器: {}", av::av_err2str(ret));
         }
         
         av::avcodec_parameters_from_context((*stream).codecpar, codec_ctx);
         (*stream).time_base = (*codec_ctx).time_base;
         
-        let ret = av::avio_open(&mut (*out_fmt_ctx).pb, output_c.as_ptr(), av::AVIO_FLAG_WRITE as i32);
+        let ret = av::avio_open(&mut (*out_fmt_ctx).pb, output_c.as_ptr(), av::AVIO_FLAG_WRITE);
         if ret < 0 {
             av::avcodec_free_context(&mut codec_ctx);
             av::avformat_free_context(out_fmt_ctx);
@@ -403,19 +385,19 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
         let mut frame = av::av_frame_alloc();
         let mut pkt = av::av_packet_alloc();
         
-        (*frame).format = AV_PIX_FMT_YUV420P as i32;
+        (*frame).format = av::AV_PIX_FMT_YUV420P as i32;
         (*frame).width = width;
         (*frame).height = height;
         av::av_frame_get_buffer(frame, 0);
         
-        let png_decoder = av::avcodec_find_decoder(AV_CODEC_ID_PNG);
+        let png_decoder = av::avcodec_find_decoder(av::AV_CODEC_ID_PNG);
         let mut png_codec_ctx = av::avcodec_alloc_context3(png_decoder);
         av::avcodec_open2(png_codec_ctx, png_decoder, ptr::null_mut());
         
         let mut sws_ctx = av::sws_getContext(
-            width, height, AV_PIX_FMT_RGBA,
-            width, height, AV_PIX_FMT_YUV420P,
-            av::SWS_BILINEAR as i32, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()
+            width, height, av::AV_PIX_FMT_RGBA,
+            width, height, av::AV_PIX_FMT_YUV420P,
+            av::SWS_BILINEAR, ptr::null(), ptr::null(), ptr::null()
         );
         
         let mut frame_count = 0i64;
@@ -430,7 +412,7 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
             let png_path_c = CString::new(png_path.as_str()).unwrap();
             let mut png_fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
             
-            let ret = av::avformat_open_input(&mut png_fmt_ctx, png_path_c.as_ptr(), ptr::null_mut(), ptr::null_mut());
+            let ret = av::avformat_open_input(&mut png_fmt_ctx, png_path_c.as_ptr(), ptr::null(), ptr::null_mut());
             if ret < 0 {
                 input_frame += 1;
                 continue;
@@ -452,8 +434,8 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
                                 (*png_frame).data.as_ptr() as *const _,
                                 (*png_frame).linesize.as_ptr() as *const _,
                                 0, height,
-                                (*frame).data.as_ptr() as *const _,
-                                (*frame).linesize.as_ptr() as *const _
+                                (*frame).data.as_ptr() as *mut _,
+                                (*frame).linesize.as_ptr() as *mut _
                             );
                             
                             (*frame).pts = frame_count;
@@ -501,16 +483,7 @@ pub fn encode_mp4(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Resu
     }
 }
 
-#[cfg(not(feature = "ffmpeg-builtin"))]
-pub fn encode_mp4(_input: &str, _output: &str, _fps: i32, _crf: i32) -> anyhow::Result<()> {
-    anyhow::bail!("rusty_ffmpeg feature 未启用，请使用: cargo build --features rusty_ffmpeg")
-}
-
-#[cfg(feature = "ffmpeg-builtin")]
 pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
-    use std::ffi::CString;
-    use std::ptr;
-    
     unsafe {
         let mut width = 0i32;
         let mut height = 0i32;
@@ -518,19 +491,27 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
         let png_path = input.replace("%05d", &format!("{:05}", 0));
         let png_path_c = CString::new(png_path.as_str()).unwrap();
         
+        eprintln!("[DEBUG APNG] 读取第一帧: {}", png_path);
+        
         let mut fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
-        let ret = av::avformat_open_input(&mut fmt_ctx, png_path_c.as_ptr(), ptr::null_mut(), ptr::null_mut());
+        let ret = av::avformat_open_input(&mut fmt_ctx, png_path_c.as_ptr(), ptr::null(), ptr::null_mut());
         if ret < 0 {
+            eprintln!("[DEBUG APNG] avformat_open_input 失败: ret={}", ret);
             anyhow::bail!("无法读取第一帧: {}", png_path);
         }
+        eprintln!("[DEBUG APNG] avformat_open_input 成功");
         
         av::avformat_find_stream_info(fmt_ctx, ptr::null_mut());
         
+        eprintln!("[DEBUG APNG] nb_streams={}", (*fmt_ctx).nb_streams);
+        
         for i in 0..(*fmt_ctx).nb_streams {
             let stream = *(*fmt_ctx).streams.add(i as usize);
-            if (*(*stream).codecpar).codec_type == AVMEDIA_TYPE_VIDEO {
+            eprintln!("[DEBUG APNG] stream {}: codec_type={}", i, (*(*stream).codecpar).codec_type);
+            if (*(*stream).codecpar).codec_type == av::AVMEDIA_TYPE_VIDEO {
                 width = (*(*stream).codecpar).width;
                 height = (*(*stream).codecpar).height;
+                eprintln!("[DEBUG APNG] 检测到视频流: {}x{}", width, height);
                 break;
             }
         }
@@ -543,25 +524,35 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
         
         info!("APNG 编码: {}x{}, fps={}", width, height, fps);
         
-        let codec = av::avcodec_find_encoder(AV_CODEC_ID_APNG);
+        let codec = av::avcodec_find_encoder(av::AV_CODEC_ID_APNG);
         if codec.is_null() {
             anyhow::bail!("找不到 APNG 编码器");
         }
         
+        // APNG 必须使用 .png 后缀，但需要显式指定 apng muxer
         let actual_output = if output.ends_with(".apng") {
-            format!("{}.png", &output[..output.len()-5])
+            output.to_string()  // 保持 .apng 后缀
         } else {
             output.to_string()
         };
         
         let output_c = CString::new(actual_output.as_str()).unwrap();
+        let format_name = CString::new("apng").unwrap();
         let mut out_fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
-        let ret = av::avformat_alloc_output_context2(&mut out_fmt_ctx, ptr::null_mut(), ptr::null(), output_c.as_ptr());
+        let ret = av::avformat_alloc_output_context2(&mut out_fmt_ctx, ptr::null(), format_name.as_ptr(), output_c.as_ptr());
         if ret < 0 {
             anyhow::bail!("无法创建输出上下文");
         }
         
-        let mut stream = av::avformat_new_stream(out_fmt_ctx, ptr::null_mut());
+        // 调试：检查 oformat 是否正确
+        let oformat = (*out_fmt_ctx).oformat;
+        if oformat.is_null() {
+            anyhow::bail!("无法获取输出格式");
+        }
+        
+        eprintln!("[DEBUG] APNG muxer 已创建, oformat={:?}", oformat);
+        
+        let stream = av::avformat_new_stream(out_fmt_ctx, ptr::null());
         if stream.is_null() {
             av::avformat_free_context(out_fmt_ctx);
             anyhow::bail!("无法创建流");
@@ -575,38 +566,43 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
         
         (*codec_ctx).width = width;
         (*codec_ctx).height = height;
-        (*codec_ctx).time_base = av::AVRational { num: 1, den: fps };
-        (*codec_ctx).framerate = av::AVRational { num: fps, den: 1 };
-        (*codec_ctx).pix_fmt = AV_PIX_FMT_RGBA;
+        (*codec_ctx).time_base = av::AVRational::new(1, fps);
+        (*codec_ctx).framerate = av::AVRational::new(fps, 1);
+        (*codec_ctx).pix_fmt = av::AV_PIX_FMT_RGBA;
         
         let ret = av::avcodec_open2(codec_ctx, codec, ptr::null_mut());
         if ret < 0 {
             av::avcodec_free_context(&mut codec_ctx);
             av::avformat_free_context(out_fmt_ctx);
-            anyhow::bail!("无法打开编码器");
+            anyhow::bail!("无法打开编码器: {}", av::av_err2str(ret));
         }
+        eprintln!("[DEBUG APNG] 编码器已打开");
         
         av::avcodec_parameters_from_context((*stream).codecpar, codec_ctx);
         (*stream).time_base = (*codec_ctx).time_base;
+        eprintln!("[DEBUG APNG] 流参数已设置");
         
-        let ret = av::avio_open(&mut (*out_fmt_ctx).pb, output_c.as_ptr(), av::AVIO_FLAG_WRITE as i32);
+        let ret = av::avio_open(&mut (*out_fmt_ctx).pb, output_c.as_ptr(), av::AVIO_FLAG_WRITE);
         if ret < 0 {
+            eprintln!("[DEBUG APNG] avio_open 失败: ret={}", ret);
             av::avcodec_free_context(&mut codec_ctx);
             av::avformat_free_context(out_fmt_ctx);
             anyhow::bail!("无法打开输出文件");
         }
+        eprintln!("[DEBUG APNG] 输出文件已打开: {}", actual_output);
         
         av::avformat_write_header(out_fmt_ctx, ptr::null_mut());
+        eprintln!("[DEBUG APNG] 文件头已写入");
         
         let mut frame = av::av_frame_alloc();
         let mut pkt = av::av_packet_alloc();
         
-        (*frame).format = AV_PIX_FMT_RGBA as i32;
+        (*frame).format = av::AV_PIX_FMT_RGBA as i32;
         (*frame).width = width;
         (*frame).height = height;
         av::av_frame_get_buffer(frame, 0);
         
-        let png_decoder = av::avcodec_find_decoder(AV_CODEC_ID_PNG);
+        let png_decoder = av::avcodec_find_decoder(av::AV_CODEC_ID_PNG);
         let mut png_codec_ctx = av::avcodec_alloc_context3(png_decoder);
         av::avcodec_open2(png_codec_ctx, png_decoder, ptr::null_mut());
         
@@ -622,7 +618,7 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
             let png_path_c = CString::new(png_path.as_str()).unwrap();
             let mut png_fmt_ctx: *mut av::AVFormatContext = ptr::null_mut();
             
-            let ret = av::avformat_open_input(&mut png_fmt_ctx, png_path_c.as_ptr(), ptr::null_mut(), ptr::null_mut());
+            let ret = av::avformat_open_input(&mut png_fmt_ctx, png_path_c.as_ptr(), ptr::null(), ptr::null_mut());
             if ret < 0 {
                 input_frame += 1;
                 continue;
@@ -682,11 +678,6 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
         info!("APNG 编码完成: {} ({} 帧)", actual_output, frame_count);
         Ok(())
     }
-}
-
-#[cfg(not(feature = "ffmpeg-builtin"))]
-pub fn encode_apng(_input: &str, _output: &str, _fps: i32) -> anyhow::Result<()> {
-    anyhow::bail!("rusty_ffmpeg feature 未启用，请使用: cargo build --features rusty_ffmpeg")
 }
 
 /// 使用内置 FFmpeg 编码（自动检测格式）

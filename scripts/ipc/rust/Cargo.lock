@@ -152,12 +152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "camino"
-version = "1.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
-
-[[package]]
 name = "cc"
 version = "1.2.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -531,11 +525,11 @@ name = "moho-mate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bindgen",
  "clap",
  "dirs",
  "libc",
  "rand",
- "rusty_ffmpeg",
  "thiserror",
  "tracing",
  "tracing-subscriber",
@@ -757,18 +751,6 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "rusty_ffmpeg"
-version = "0.17.0+ffmpeg.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2af9fcc780549d620ddedd4d9f26d62c523f221c0db882ea75e8a5ffe2fff9a"
-dependencies = [
- "bindgen",
- "camino",
- "once_cell",
- "pkg-config",
 ]
 
 [[package]]

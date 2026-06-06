@@ -751,10 +751,13 @@ fn do_encode(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Result<()
     // 调试输出
     let check_result = crate::encode_native::check_ffmpeg_available();
     eprintln!("[DEBUG] check_ffmpeg_available: {}", check_result);
+    eprintln!("[DEBUG] input: {}, output: {}", input, output);
+    eprintln!("[DEBUG] output_ext: {}", output_ext);
 
-    // 优先使用内置 FFmpeg（rusty_ffmpeg）
+    // 优先使用内置 FFmpeg（自定义 FFI）
     if check_result {
-        info!("使用 Moho 内置 FFmpeg (rusty_ffmpeg)");
+        eprintln!("[DEBUG] 使用 Moho 内置 FFmpeg (自定义 FFI)");
+        info!("使用 Moho 内置 FFmpeg (自定义 FFI)");
         return crate::encode_native::encode_with_builtin_ffmpeg(input, output, fps, crf);
     }
 

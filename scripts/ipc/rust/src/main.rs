@@ -25,6 +25,7 @@ use std::ptr;
 
 mod lua_ffi;
 mod ipc_core;
+mod ffmpeg_ffi;
 mod encode_native;
 
 use lua_ffi::*;
