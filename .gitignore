@@ -1,5 +1,18 @@
-# FFmpeg 源码头文件（build.rs 自动下载）
-scripts/rust/ffmpeg-headers/
+# Rust 编译输出
+scripts/moho-mate-src/target/
 
-# 编译输出
-scripts/rust/target/
+# FFmpeg 源码头文件（build.rs 自动下载）
+scripts/moho-mate-src/ffmpeg-headers/
+
+# Lua 编译产物
+scripts/moho-mate-src/lua-src/src/*.o
+scripts/moho-mate-src/lua-src/src/lua
+scripts/moho-mate-src/lua-src/src/luac
+scripts/moho-mate-src/lua-src/src/liblua.a
+scripts/moho-mate-src/lua-src/lib/
+
+# 旧的 ipc 目录已迁移到 moho-mate-src
+scripts/ipc/
+
+# macOS
+.DS_Store
