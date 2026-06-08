@@ -47,3 +47,7 @@ rustflags = ["-C", "link-arg=-Wl,-export_dynamic"]
 
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-export_dynamic"]
+
+# Windows (MinGW): 导出所有符号（让 exe 可以被 LoadLibrary 加载）
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--export-all-symbols"]
