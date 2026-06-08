@@ -25,7 +25,9 @@ use std::ptr;
 
 mod lua_ffi;
 mod ipc_core;
+#[cfg(target_os = "macos")]
 mod ffmpeg_ffi;
+#[cfg(target_os = "macos")]
 mod encode_native;
 
 use lua_ffi::*;
@@ -393,6 +395,7 @@ fn cmd_start(project: Option<&str>, script: Option<&str>, timeout: u32) -> Resul
 
     let mut ipc_ready = false;
     while start_time.elapsed().as_secs() < max_wait as u64 {
+        #[cfg(unix)]
         if std::path::Path::new(socket_path).exists() {
             // 尝试连接测试
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -403,6 +406,12 @@ fn cmd_start(project: Option<&str>, script: Option<&str>, timeout: u32) -> Resul
                 ipc_ready = true;
                 break;
             }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Windows: 检查命名管道
+            // TODO: 实现 Windows 命名管道连接测试
+            ipc_ready = true;
         }
         print!(".");
         std::io::stdout().flush().ok();
@@ -628,43 +637,53 @@ fn rand() -> u32 {
 }
 
 fn cmd_call(code: Option<&str>, file: Option<&str>) -> Result<()> {
-    use std::os::unix::net::UnixStream;
-    use std::io::{Read, Write};
-    use std::net::Shutdown;
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixStream;
+        use std::io::{Read, Write};
+        use std::net::Shutdown;
 
-    let socket_path = "/tmp/moho_ipc.sock";
+        let socket_path = "/tmp/moho_ipc.sock";
 
-    let mut stream = match UnixStream::connect(socket_path) {
-        Ok(s) => s,
-        Err(_) => {
-            anyhow::bail!("IPC 未运行。请先启动 Moho 并运行 IPC 脚本。");
-        }
-    };
+        let mut stream = match UnixStream::connect(socket_path) {
+            Ok(s) => s,
+            Err(_) => {
+                anyhow::bail!("IPC 未运行。请先启动 Moho 并运行 IPC 脚本。");
+            }
+        };
 
-    let cmd = if let Some(f) = file {
-        // 读取文件内容并发送
-        std::fs::read_to_string(f)?
-    } else if let Some(c) = code {
-        c.to_string()
-    } else {
-        anyhow::bail!("需要指定 Lua 代码或 --file 参数");
-    };
+        let cmd = if let Some(f) = file {
+            // 读取文件内容并发送
+            std::fs::read_to_string(f)?
+        } else if let Some(c) = code {
+            c.to_string()
+        } else {
+            anyhow::bail!("需要指定 Lua 代码或 --file 参数");
+        };
 
-    // 发送命令
-    stream.write_all(cmd.as_bytes())?;
-    stream.write_all(b"\n");
+        // 发送命令
+        stream.write_all(cmd.as_bytes())?;
+        stream.write_all(b"\n");
+        
+        // 关闭写入端，告诉服务端"发送完毕"
+        // 这样服务端会在响应完成后检测到 EOF 并断开连接
+        stream.shutdown(Shutdown::Write)?;
+
+        // 读取响应（服务端断开连接后 read_to_string 会返回）
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+
+        println!("{}", response.trim());
+
+        Ok(())
+    }
     
-    // 关闭写入端，告诉服务端"发送完毕"
-    // 这样服务端会在响应完成后检测到 EOF 并断开连接
-    stream.shutdown(Shutdown::Write)?;
-
-    // 读取响应（服务端断开连接后 read_to_string 会返回）
-    let mut response = String::new();
-    stream.read_to_string(&mut response)?;
-
-    println!("{}", response.trim());
-
-    Ok(())
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: 通过命名管道连接
+        let _ = (code, file);
+        anyhow::bail!("Windows CLI 暂未实现，请使用 Lua 模块模式");
+    }
 }
 
 fn cmd_quit() -> Result<()> {
@@ -692,39 +711,48 @@ fn cmd_status() -> Result<()> {
 
     println!("=== IPC 状态 ===");
     
-    // 尝试通过 socket 检查
-    let socket_path = "/tmp/moho_ipc.sock";
-    let socket_running = std::path::Path::new(socket_path).exists();
-    
-    if socket_running {
-        // 尝试连接 socket
-        use std::io::{Read, Write};
-        use std::os::unix::net::UnixStream;
+    #[cfg(unix)]
+    {
+        // 尝试通过 socket 检查
+        let socket_path = "/tmp/moho_ipc.sock";
+        let socket_running = std::path::Path::new(socket_path).exists();
         
-        match UnixStream::connect(socket_path) {
-            Ok(mut stream) => {
-                // 发送状态查询
-                stream.write_all(b"status\n")?;
-                stream.flush()?;
-                
-                // 关闭写端，让服务端知道我们发完了
-                use std::net::Shutdown;
-                let _ = stream.shutdown(Shutdown::Write);
-                
-                let mut response = String::new();
-                stream.read_to_string(&mut response)?;
-                
-                println!("  运行中: 是");
-                println!("  Socket: {}", socket_path);
-                println!("  响应: {}", response.trim());
+        if socket_running {
+            // 尝试连接 socket
+            use std::io::{Read, Write};
+            use std::os::unix::net::UnixStream;
+            
+            match UnixStream::connect(socket_path) {
+                Ok(mut stream) => {
+                    // 发送状态查询
+                    stream.write_all(b"status\n")?;
+                    stream.flush()?;
+                    
+                    // 关闭写端，让服务端知道我们发完了
+                    use std::net::Shutdown;
+                    let _ = stream.shutdown(Shutdown::Write);
+                    
+                    let mut response = String::new();
+                    stream.read_to_string(&mut response)?;
+                    
+                    println!("  运行中: 是");
+                    println!("  Socket: {}", socket_path);
+                    println!("  响应: {}", response.trim());
+                }
+                Err(_) => {
+                    println!("  运行中: 否（socket 存在但无法连接）");
+                }
             }
-            Err(_) => {
-                println!("  运行中: 否（socket 存在但无法连接）");
-            }
+        } else {
+            println!("  运行中: 否");
+            println!("  Socket: {}", socket_path);
         }
-    } else {
-        println!("  运行中: 否");
-        println!("  Socket: {}", socket_path);
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        println!("  运行中: {}", running);
+        println!("  管道: {}", path);
     }
     
     println!("  调用次数: {}", calls);
@@ -1178,6 +1206,7 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
 // ========== IPC 辅助函数（render 命令使用）==========
 
 /// 自动启动 IPC 服务
+#[cfg(unix)]
 fn auto_start_ipc() -> Result<()> {
     use std::os::unix::net::UnixStream;
     
@@ -1226,7 +1255,13 @@ fn auto_start_ipc() -> Result<()> {
     anyhow::bail!("IPC 启动超时")
 }
 
+#[cfg(target_os = "windows")]
+fn auto_start_ipc() -> Result<()> {
+    anyhow::bail!("Windows auto_start_ipc 暂未实现")
+}
+
 /// 发送单行 IPC 命令
+#[cfg(unix)]
 fn ipc_send(cmd: &str) -> Result<String> {
     use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
@@ -1245,7 +1280,13 @@ fn ipc_send(cmd: &str) -> Result<String> {
     Ok(response)
 }
 
+#[cfg(target_os = "windows")]
+fn ipc_send(_cmd: &str) -> Result<String> {
+    anyhow::bail!("Windows ipc_send 暂未实现")
+}
+
 /// 发送多行 IPC 命令
+#[cfg(unix)]
 fn ipc_send_multiline(cmd: &str) -> Result<String> {
     use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
@@ -1265,4 +1306,9 @@ fn ipc_send_multiline(cmd: &str) -> Result<String> {
     print!("{}", response);
     
     Ok(response)
+}
+
+#[cfg(target_os = "windows")]
+fn ipc_send_multiline(_cmd: &str) -> Result<String> {
+    anyhow::bail!("Windows ipc_send_multiline 暂未实现")
 }

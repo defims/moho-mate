@@ -248,6 +248,7 @@ pub struct AVFilterInOut {
 // === 外部函数声明 ===
 
 // libavcodec
+#[cfg(target_os = "macos")]
 #[link(name = "avcodec.61", kind = "dylib")]
 extern "C" {
     pub fn avcodec_find_encoder(codec_id: AVCodecID) -> *const AVCodec;
@@ -264,6 +265,7 @@ extern "C" {
 }
 
 // libavformat
+#[cfg(target_os = "macos")]
 #[link(name = "avformat.61", kind = "dylib")]
 extern "C" {
     pub fn avformat_open_input(
@@ -290,6 +292,7 @@ extern "C" {
 }
 
 // libavutil
+#[cfg(target_os = "macos")]
 #[link(name = "avutil.59", kind = "dylib")]
 extern "C" {
     pub fn av_frame_alloc() -> *mut AVFrame;
@@ -306,6 +309,7 @@ extern "C" {
 }
 
 // libswscale
+#[cfg(target_os = "macos")]
 #[link(name = "swscale.8", kind = "dylib")]
 extern "C" {
     pub fn sws_getContext(
@@ -333,6 +337,7 @@ extern "C" {
 }
 
 // libavfilter
+#[cfg(target_os = "macos")]
 #[link(name = "avfilter.10", kind = "dylib")]
 extern "C" {
     pub fn avfilter_graph_alloc() -> *mut AVFilterGraph;
