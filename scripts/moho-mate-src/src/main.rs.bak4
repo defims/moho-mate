@@ -24,12 +24,11 @@ use std::ffi::CString;
 use std::ptr;
 
 pub mod lua_ffi;
-pub mod ipc_core;
+mod ipc_core;
 #[cfg(target_os = "macos")]
-pub mod ffmpeg_ffi;
-pub mod config;
+mod ffmpeg_ffi;
 #[cfg(target_os = "macos")]
-pub mod encode_native;
+mod encode_native;
 
 use lua_ffi::*;
 use ipc_core::*;

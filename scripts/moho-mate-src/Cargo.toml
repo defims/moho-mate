@@ -3,6 +3,11 @@ name = "moho-mate"
 version = "0.1.0"
 edition = "2021"
 
+# 库（供测试和外部使用）
+[lib]
+name = "moho_mate"
+path = "src/lib.rs"
+
 # CLI 可执行文件
 [[bin]]
 name = "moho-mate"

@@ -17,6 +17,9 @@ use std::time::Duration;
 use std::ptr;
 use std::os::raw::c_int;
 
+// 导出公共状态变量供测试使用
+pub use std::sync::atomic::{AtomicBool as PubAtomicBool, AtomicI32 as PubAtomicI32, AtomicUsize as PubAtomicUsize};
+
 #[cfg(unix)]
 use std::os::unix::net::{UnixStream, UnixListener};
 #[cfg(unix)]
@@ -650,9 +653,11 @@ fn verify_caller_win(pipe_handle: win_pipe::HANDLE) -> bool {
 
 // ========== 全局状态 ==========
 
-static RUNNING: AtomicBool = AtomicBool::new(false);
-static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-static ERROR_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static RUNNING: AtomicBool = AtomicBool::new(false);
+pub static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static ERROR_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static PROCESSED_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static COMMAND_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 // 启动 IPC 的 moho-mate 可执行路径（用于调用者验证）
 static IPC_OWNER_PATH: Mutex<String> = Mutex::new(String::new());
