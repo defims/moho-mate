@@ -1222,6 +1222,12 @@ impl PackageManager {
                     let dep_pkg = PackageJson::from_file(&pkg_dir.join("package.json"))?;
                     deps.push((dep_name.clone(), version.clone(), dep_pkg));
                     println!("  ✓ 已存在: {}@{}", dep_name, version);
+                    
+                    // 为已存在的依赖包也创建 node_modules
+                    let dep_deps = self.collect_installed_deps(&deps.last().unwrap().2)?;
+                    if !dep_deps.is_empty() {
+                        self.create_node_modules_symlinks(&pkg_dir, &dep_deps)?;
+                    }
                 } else {
                     // 未安装，从 registry 安装
                     self.install_from_registry(dep_name, Some(version_range))?;
@@ -1234,6 +1240,28 @@ impl PackageManager {
                     let pkg_dir = self.packages_dir.join(dep_name).join(&lock_pkg.version);
                     let dep_pkg = PackageJson::from_file(&pkg_dir.join("package.json"))?;
                     deps.push((dep_name.clone(), lock_pkg.version.clone(), dep_pkg));
+                }
+            }
+        }
+        
+        Ok(deps)
+    }
+    
+    /// 收集已安装的依赖信息（不安装，只收集）
+    fn collect_installed_deps(&self, pkg: &PackageJson) -> Result<Vec<(String, String, PackageJson)>> {
+        let mut deps = Vec::new();
+        
+        if let Some(ref dependencies) = pkg.dependencies {
+            for (dep_name, _version_range) in dependencies {
+                // 查找已安装的版本
+                let installed = self.find_installed_versions(dep_name)?;
+                
+                if !installed.is_empty() {
+                    let version = installed[0].clone();
+                    let pkg_dir = self.packages_dir.join(dep_name).join(&version);
+                    if let Ok(dep_pkg) = PackageJson::from_file(&pkg_dir.join("package.json")) {
+                        deps.push((dep_name.clone(), version, dep_pkg));
+                    }
                 }
             }
         }
