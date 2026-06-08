@@ -363,7 +363,10 @@ impl PackageManager {
         // 6. 生成引用文件
         self.generate_ref_files(&target_dir, &pkg, &deps)?;
         
-        // 7. 更新 _tool_list.txt
+        // 7. 创建 node_modules 符号链接
+        self.create_node_modules_symlinks(&target_dir, &deps)?;
+        
+        // 8. 更新 _tool_list.txt
         if let Some(ref moho) = pkg.moho {
             if let Some(ref tools) = moho.tools {
                 if !tools.is_empty() {
@@ -372,7 +375,7 @@ impl PackageManager {
             }
         }
         
-        // 8. 更新 Lock 文件
+        // 9. 更新 Lock 文件
         self.update_lock(&pkg, &deps, None)?;
         
         println!("✓ 安装完成");
@@ -713,6 +716,55 @@ end
         }
         
         Ok(versions)
+    }
+    
+    /// 创建 node_modules 符号链接
+    fn create_node_modules_symlinks(&self, pkg_dir: &Path, deps: &[(String, String, PackageJson)]) -> Result<()> {
+        if deps.is_empty() {
+            return Ok(());
+        }
+        
+        let node_modules_dir = pkg_dir.join("node_modules");
+        
+        // 删除旧的 node_modules（如果存在）
+        if node_modules_dir.exists() {
+            std::fs::remove_dir_all(&node_modules_dir)?;
+        }
+        
+        std::fs::create_dir_all(&node_modules_dir)?;
+        
+        for (dep_name, dep_version, _) in deps {
+            // 目标: packages/@org/name/version/
+            let dep_pkg_dir = self.packages_dir.join(dep_name).join(dep_version);
+            
+            if !dep_pkg_dir.exists() {
+                eprintln!("  ⚠ 依赖包不存在: {}@{}", dep_name, dep_version);
+                continue;
+            }
+            
+            // 创建符号链接: node_modules/@org/name -> ../../../@org/name/version/
+            let symlink_path = node_modules_dir.join(dep_name);
+            
+            // 确保父目录存在
+            if let Some(parent) = symlink_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            
+            // 计算相对路径
+            let relative_path = pathdiff::diff_paths(&dep_pkg_dir, symlink_path.parent().unwrap())
+                .unwrap_or_else(|| dep_pkg_dir.clone());
+            
+            // 创建符号链接
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&relative_path, &symlink_path)?;
+            
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_dir(&relative_path, &symlink_path)?;
+            
+            println!("  ✓ 链接: {} -> {}", dep_name, relative_path.display());
+        }
+        
+        Ok(())
     }
     
     /// 获取配置
@@ -1059,10 +1111,13 @@ impl PackageManager {
             println!("✓ 已安装: {}@{}", pkg.name, pkg.version);
         }
         
-        // 10. 生成引用文件
+        // 10. 创建 node_modules 符号链接（依赖包）
+        self.create_node_modules_symlinks(&target_dir, &deps)?;
+        
+        // 11. 生成引用文件
         self.generate_ref_files(&target_dir, &pkg, &deps)?;
         
-        // 11. 更新 _tool_list.txt
+        // 12. 更新 _tool_list.txt
         if let Some(ref moho) = pkg.moho {
             if let Some(ref tools) = moho.tools {
                 if !tools.is_empty() {
@@ -1071,7 +1126,7 @@ impl PackageManager {
             }
         }
         
-        // 12. 更新 Lock 文件
+        // 13. 更新 Lock 文件
         self.update_lock(&pkg, &deps, Some(tarball_url))?;
         
         println!("✓ 安装完成");
