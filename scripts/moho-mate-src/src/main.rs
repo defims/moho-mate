@@ -25,11 +25,12 @@ use std::ptr;
 
 pub mod lua_ffi;
 pub mod ipc_core;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
 pub mod ffmpeg_ffi;
 pub mod config;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
 pub mod encode_native;
+pub mod pkg;
 
 use lua_ffi::*;
 use ipc_core::*;
@@ -271,6 +272,82 @@ enum Commands {
         /// 操作 (list, backup, restore)
         action: String,
     },
+
+    /// 包管理
+    Pkg {
+        #[command(subcommand)]
+        action: PkgCommands,
+    },
+}
+
+/// 包管理子命令
+#[derive(Subcommand)]
+enum PkgCommands {
+    /// 安装包
+    Install {
+        /// 包名或本地文件路径
+        package: String,
+    },
+
+    /// 卸载包
+    Uninstall {
+        /// 包名
+        package: String,
+    },
+
+    /// 列出已安装的包
+    List,
+
+    /// 显示包信息
+    Info {
+        /// 包名
+        package: String,
+    },
+
+    /// 显示依赖树
+    Deps {
+        /// 包名
+        package: String,
+    },
+
+    /// 搜索 registry 包
+    Search {
+        /// 搜索关键词
+        keyword: String,
+    },
+
+    /// 设置 registry
+    SetRegistry {
+        /// registry 地址，或 --default 恢复默认
+        registry: Option<String>,
+        /// 恢复默认 registry
+        #[arg(long)]
+        default: bool,
+    },
+
+    /// 创建包模板
+    Create {
+        /// 包名
+        name: String,
+        /// 输出目录
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// 打包为 zip
+    Pack {
+        /// 包目录
+        dir: String,
+    },
+
+    /// 更新包
+    Update {
+        /// 包名（不指定则更新所有）
+        package: Option<String>,
+    },
+
+    /// 清理无用包
+    Prune,
 }
 
 fn main() -> Result<()> {
@@ -309,6 +386,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Config { action }) => {
             cmd_config(&action)?;
+        }
+        Some(Commands::Pkg { action }) => {
+            cmd_pkg(action)?;
         }
     }
 
@@ -708,7 +788,7 @@ fn cmd_quit() -> Result<()> {
 }
 
 fn cmd_status() -> Result<()> {
-    let (running, path, calls, errors) = get_status();
+    let (_running, _path, calls, errors) = get_status();
 
     println!("=== IPC 状态 ===");
     
@@ -1103,6 +1183,161 @@ fn parse_moho_content(content: &str) {
     println!("  图层数: {}", layer_count);
     println!("  骨骼数: {}", bone_count);
     println!("  网格数: {}", mesh_count);
+}
+
+fn cmd_pkg(action: PkgCommands) -> Result<()> {
+    use pkg::PackageManager;
+    
+    let mut pm = PackageManager::new()?;
+    
+    match action {
+        PkgCommands::Install { package } => {
+            let path = std::path::Path::new(&package);
+            if path.exists() {
+                // 本地文件安装
+                pm.install_local(path)?;
+            } else {
+                // 从 registry 安装
+                pm.install_from_registry(&package, None)?;
+            }
+        }
+        PkgCommands::Uninstall { package } => {
+            pm.uninstall(&package)?;
+        }
+        PkgCommands::List => {
+            let packages = pm.list()?;
+            let count = packages.len();
+            
+            println!("=== 已安装的脚本包 ===");
+            
+            if packages.is_empty() {
+                println!("  (无)");
+            } else {
+                for (name, pkg) in packages {
+                    println!("\n{}@{}", name, pkg.version);
+                    if let Some(ref desc) = pkg.description {
+                        println!("  描述: {}", desc);
+                    }
+                    if let Some(ref moho) = pkg.moho {
+                        if let Some(ref tools) = moho.tools {
+                            if !tools.is_empty() {
+                                let tool_ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
+                                println!("  工具: {}", tool_ids.join(", "));
+                            }
+                        }
+                    }
+                    println!("  路径: {}/{}/", pm.get_packages_dir().display(), name);
+                }
+            }
+            
+            println!("\n共 {} 个包", count);
+        }
+        PkgCommands::Info { package } => {
+            let packages = pm.list()?;
+            let found = packages.iter().find(|(n, _)| n == &package);
+            
+            if let Some((_, pkg)) = found {
+                println!("=== {} ===", package);
+                println!("名称: {}", pkg.name);
+                println!("版本: {}", pkg.version);
+                if let Some(ref desc) = pkg.description {
+                    println!("描述: {}", desc);
+                }
+                if let Some(ref author) = pkg.author {
+                    println!("作者: {}", author.name());
+                }
+                if let Some(ref license) = pkg.license {
+                    println!("许可: {}", license);
+                }
+                if let Some(ref main) = pkg.main {
+                    println!("入口: {}", main);
+                }
+                if let Some(ref moho) = pkg.moho {
+                    if let Some(ref tools) = moho.tools {
+                        if !tools.is_empty() {
+                            println!("\n工具:");
+                            for tool in tools {
+                                println!("  {} ({})", tool.id, tool.name);
+                            }
+                        }
+                    }
+                }
+                println!("\n路径: {}/{}/", pm.get_packages_dir().display(), package);
+            } else {
+                println!("✗ 包未安装: {}", package);
+            }
+        }
+        PkgCommands::Deps { package } => {
+            let packages = pm.list()?;
+            let found = packages.iter().find(|(n, _)| n == &package);
+            
+            if let Some((_, pkg)) = found {
+                println!("=== {} 依赖 ===", package);
+                if let Some(ref deps) = pkg.dependencies {
+                    for (name, version) in deps {
+                        println!("  {}@{}", name, version);
+                    }
+                } else {
+                    println!("  (无依赖)");
+                }
+            } else {
+                println!("✗ 包未安装: {}", package);
+            }
+        }
+        PkgCommands::Search { keyword } => {
+            println!("▶ 搜索: {}", keyword);
+            println!("  Registry: {}", pm.get_config().registry);
+            
+            let results = pm.search(&keyword)?;
+            let count = results.len();
+            
+            if results.is_empty() {
+                println!("\n✗ 未找到匹配的包");
+            } else {
+                println!("\n=== 搜索结果 ===");
+                for r in &results {
+                    println!("\n{}@{}", r.name, r.version);
+                    if let Some(ref desc) = r.description {
+                        println!("  描述: {}", desc);
+                    }
+                    if let Some(ref author) = r.author {
+                        println!("  作者: {}", author);
+                    }
+                }
+                println!("\n共 {} 个结果", count);
+                println!("\n安装: moho-mate pkg install <包名>");
+            }
+        }
+        PkgCommands::SetRegistry { registry, default } => {
+            let new_registry = if default {
+                "https://mirrors.cloud.tencent.com/npm".to_string()
+            } else if let Some(r) = registry {
+                r
+            } else {
+                println!("✗ 请指定 registry 地址或使用 --default");
+                return Ok(());
+            };
+            
+            pm.set_registry(new_registry.clone())?;
+            println!("✓ registry 已更新: {}", new_registry);
+        }
+        PkgCommands::Create { name, output } => {
+            let output_dir = output.map(|s| std::path::PathBuf::from(s));
+            pm.create(&name, output_dir.as_deref())?;
+        }
+        PkgCommands::Pack { dir } => {
+            let pkg_dir = std::path::PathBuf::from(&dir);
+            pm.pack(&pkg_dir)?;
+        }
+        PkgCommands::Update { package } => {
+            pm.update(package.as_deref())?;
+        }
+        PkgCommands::Prune => {
+            pm.prune()?;
+        }
+    }
+    
+    Ok(())
 }
 
 fn cmd_config(action: &str) -> Result<()> {

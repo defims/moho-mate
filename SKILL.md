@@ -433,7 +433,14 @@ moho-mate inspect project.moho
 | `draw <shape> [output]` | 绘制形状 |
 | `inspect <project>` | 查看项目信息 |
 | `config list/backup/restore` | 配置管理 |
-| `encode <input> <output> [options]` | PNG 序列合成视频 ✨ NEW |
+| `encode <input> <output> [options]` | PNG 序列合成视频 |
+| `pkg install <package>` | 安装脚本包 ✨ |
+| `pkg uninstall <package>` | 卸载脚本包 ✨ |
+| `pkg list` | 列出已安装包 ✨ |
+| `pkg info <package>` | 显示包信息 ✨ |
+| `pkg deps <package>` | 显示依赖树 ✨ |
+| `pkg search <keyword>` | 搜索 registry 包 ✨ NEW |
+| `pkg set-registry <url>` | 设置 registry ✨ |
 
 
 ### encode 参数（使用 Moho 内置 FFmpeg，无需额外依赖）✨ NEW
@@ -2232,4 +2239,100 @@ local layer = moho:CreateNewLayer(MOHO.LT_VECTOR)
 - `moho.frame` - 当前帧（默认 0）
 - `moho:DrawingMesh()` - 获取当前图层 Mesh
 - `moho:LayerAsVector(layer):Mesh()` - 获取指定图层 Mesh
+
+
+
+---
+
+## 脚本包管理（Script Package Manager）✨ NEW
+
+类似 npm/pnpm 的 Moho 脚本包管理系统。
+
+### 包存储位置
+
+```
+~/Library/Application Support/com.maohou.moho-mate/packages/{name}/{version}/
+```
+
+### 快速开始
+
+```bash
+# 安装本地包
+moho-mate pkg install ./my-package.zip
+
+# 列出已安装的包
+moho-mate pkg list
+
+# 查看包信息
+moho-mate pkg info my-package
+
+# 卸载包
+moho-mate pkg uninstall my-package
+```
+
+### package.json 规范
+
+```json
+{
+  "name": "@maohou/moho-sdk",
+  "version": "1.0.0",
+  "description": "Moho SDK",
+  "main": "Scripts/Modules/init.lua",
+  "files": [
+    "Scripts/Tool/my_tool.lua",
+    "Scripts/Tool/my_tool.png",
+    "Scripts/Modules/init.lua"
+  ],
+  "dependencies": {
+    "@maohou/json": "^1.0.0"
+  },
+  "moho": {
+    "tools": [
+      { "id": "my_tool", "name": "My Tool" }
+    ]
+  }
+}
+```
+
+### 字段说明
+
+| 字段 | 必填 | 说明 |
+|------|:----:|------|
+| `name` | ✅ | 包名（支持 @org/name 格式） |
+| `version` | ✅ | 版本号 |
+| `main` | ❌ | 主入口（被依赖时需要） |
+| `files` | ✅ | 文件清单 |
+| `dependencies` | ❌ | 依赖包 |
+| `moho.tools` | ❌ | Tool 脚本清单 |
+
+### 引用文件机制
+
+安装后，包存储在 `com.maohou.moho-mate/packages/` 目录，
+用户内容文件夹只放引用文件（loadfile 方式）。
+
+```lua
+-- Tool/my_tool.lua（引用文件）
+-- 由 moho-mate 自动生成
+
+-- 添加本包和依赖的 Modules 到 package.path
+local path = ".../Scripts/Modules/?.lua"
+if not package.path:find(path, 1, true) then
+    package.path = path .. ";" .. package.path
+end
+
+-- 加载实际脚本
+return loadfile("实际路径")(...)
+```
+
+### 配置 Registry
+
+```bash
+# 查看当前配置
+moho-mate pkg set-registry --default
+
+# 设置自定义 registry
+moho-mate pkg set-registry https://registry.npmjs.org
+```
+
+默认 registry：`https://mirrors.cloud.tencent.com/npm`
 

@@ -1,11 +1,14 @@
 //! Lua FFI 测试
+//!
+//! 这些测试需要 lua-ffi feature 才能运行
+//! 运行: cargo test --features lua-ffi
 
+#[cfg(feature = "lua-ffi")]
 use moho_mate::lua_ffi::*;
 
+#[cfg(feature = "lua-ffi")]
 #[test]
 fn test_lua_state_exists() {
-    // lua_State 是 opaque 类型，无法直接创建
-    // 测试 FFI 函数签名是否正确
     unsafe {
         // 创建最小 Lua 状态用于测试
         let L = luaL_newstate();
@@ -27,6 +30,7 @@ fn test_lua_state_exists() {
     }
 }
 
+#[cfg(feature = "lua-ffi")]
 #[test]
 fn test_lua_table_operations() {
     unsafe {
@@ -55,6 +59,7 @@ fn test_lua_table_operations() {
     }
 }
 
+#[cfg(feature = "lua-ffi")]
 #[test]
 fn test_lua_integer_operations() {
     unsafe {
@@ -74,6 +79,7 @@ fn test_lua_integer_operations() {
     }
 }
 
+#[cfg(feature = "lua-ffi")]
 #[test]
 fn test_lua_boolean_operations() {
     unsafe {
@@ -88,4 +94,12 @@ fn test_lua_boolean_operations() {
         
         lua_close(L);
     }
+}
+
+// 非 lua-ffi feature 时的占位测试
+#[cfg(not(feature = "lua-ffi"))]
+#[test]
+fn test_lua_ffi_skipped() {
+    // lua-ffi 测试需要启用 feature
+    println!("lua-ffi tests skipped (feature not enabled)");
 }

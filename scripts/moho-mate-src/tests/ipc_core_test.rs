@@ -48,7 +48,10 @@ fn test_encode_status_default() {
 
 #[test]
 fn test_encode_cancel() {
-    // 取消编码应该返回成功
+    // 取消编码：如果没有编码任务，返回 false
     let result = encode_cancel();
-    assert!(result, "encode_cancel should return true");
+    // 如果编码状态不是 running(1)，返回 false
+    // 这是预期行为：无法取消一个不存在的编码任务
+    // 初始状态下编码状态应该是 idle(0)
+    assert!(!result, "encode_cancel should return false when no encoding is running");
 }

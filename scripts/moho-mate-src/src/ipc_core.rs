@@ -774,12 +774,12 @@ pub fn ipc_start(L: lua_State, _owner_path: Option<String>) -> (bool, String) {
         if let Ok(mut l) = SOCKET_LISTENER.lock() {
             *l = Some(listener);
         }
-    }
 
-    #[cfg(target_os = "macos")]
-    {
-        // macOS: 使用 CFRunLoop（在 Main Thread 执行回调）
-        setup_cfrunloop_socket(listener_fd);
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: 使用 CFRunLoop（在 Main Thread 执行回调）
+            setup_cfrunloop_socket(listener_fd);
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -1606,7 +1606,7 @@ fn do_encode(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Result<()
     info!("编码格式: {}", output_ext);
 
     // macOS: 优先使用内置 FFmpeg（自定义 FFI）
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
     {
         let check_result = crate::encode_native::check_ffmpeg_available();
         eprintln!("[DEBUG] check_ffmpeg_available: {}", check_result);

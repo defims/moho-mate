@@ -21,9 +21,12 @@ tracing-subscriber = "0.3"
 dirs = "5"
 rand = "0.8"
 clap = { version = "4", features = ["derive"] }
-zip = "0.6"
+zip = { version = "0.6", features = ["deflate"] }
 libc = "0.2"
 which = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
 
 # FFmpeg 绑定已替换为自定义 FFI（见 src/ffmpeg_ffi.rs）
 # 不再依赖 rusty_ffmpeg
@@ -36,8 +39,9 @@ bindgen = "0.72"
 # 不需要 dispatch2，使用自定义 GCD FFI
 
 [features]
-default = ["ffmpeg-builtin"]
+default = []
 ffmpeg-builtin = []  # 使用 Moho 内置 FFmpeg（自定义 FFI）
+http-client = []    # HTTP 客户端支持（registry 操作）
 
 [profile.release]
 opt-level = 3

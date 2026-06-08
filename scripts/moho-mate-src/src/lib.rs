@@ -5,9 +5,10 @@
 pub mod config;
 pub mod lua_ffi;
 pub mod ipc_core;
+pub mod pkg;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
 pub mod ffmpeg_ffi;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
 pub mod encode_native;
