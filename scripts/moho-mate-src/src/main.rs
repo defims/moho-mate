@@ -28,6 +28,8 @@ pub mod ipc_core;
 #[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
 pub mod ffmpeg_ffi;
 pub mod config;
+pub mod app_config;
+pub mod self_update;
 #[cfg(all(target_os = "macos", feature = "ffmpeg-builtin"))]
 pub mod encode_native;
 pub mod pkg;
@@ -195,6 +197,7 @@ use std::io::Write; // for flush()
 
 #[derive(Parser)]
 #[command(name = "moho-mate")]
+#[command(version)]
 #[command(about = "Moho 命令行工具 + Lua 模块", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -283,6 +286,16 @@ enum Commands {
     Mohoscripts {
         #[command(subcommand)]
         action: MohoscriptsCommands,
+    },
+
+    /// 初始化配置
+    Init,
+
+    /// 自升级管理
+    #[command(name = "self")]
+    SelfCmd {
+        #[command(subcommand)]
+        action: SelfCommands,
     },
 }
 
@@ -375,6 +388,30 @@ enum MohoscriptsCommands {
     },
 }
 
+/// 自升级子命令
+#[derive(Subcommand)]
+enum SelfCommands {
+    /// 检查更新
+    CheckUpdate {
+        /// 输出 JSON 格式
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 更新到最新版本
+    Update {
+        /// 强制更新到指定版本
+        #[arg(long)]
+        version: Option<String>,
+        /// 允许 MAJOR 版本升级
+        #[arg(long)]
+        major: bool,
+    },
+
+    /// 回滚到上一版本
+    Rollback,
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -417,6 +454,12 @@ fn main() -> Result<()> {
         }
         Some(Commands::Mohoscripts { action }) => {
             cmd_mohoscripts(action)?;
+        }
+        Some(Commands::Init) => {
+            app_config::AppConfig::init()?;
+        }
+        Some(Commands::SelfCmd { action }) => {
+            cmd_self(action)?;
         }
     }
 
@@ -1376,6 +1419,51 @@ fn cmd_mohoscripts(action: MohoscriptsCommands) -> Result<()> {
         }
         MohoscriptsCommands::Install { slug } => {
             pm.install_mohoscripts(&slug)?;
+        }
+    }
+    Ok(())
+}
+
+fn cmd_self(action: SelfCommands) -> Result<()> {
+    use self_update::{check_update, find_asset, download_and_verify, replace_binary};
+    
+    match action {
+        SelfCommands::CheckUpdate { json: _ } => {
+            match check_update()? {
+                Some(release) => {
+                    println!("\n安装: moho-mate self update");
+                    
+                    if let Some((name, url)) = find_asset(&release) {
+                        println!("\n下载: {}", name);
+                        println!("地址: {}", url);
+                    } else {
+                        println!("\n⚠ 未找到适合当前平台的安装包");
+                    }
+                }
+                None => {}
+            }
+        }
+        SelfCommands::Update { version, major: _ } => {
+            if let Some(v) = version {
+                println!("▶ 更新到版本 {}...", v);
+            } else {
+                match check_update()? {
+                    Some(release) => {
+                        if let Some((name, url)) = find_asset(&release) {
+                            let tar_path = download_and_verify(&url, None)?;
+                            replace_binary(&tar_path)?;
+                        } else {
+                            println!("✗ 未找到适合当前平台的安装包");
+                            println!("  请手动下载: https://moho-mate.maohou.com/download");
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        SelfCommands::Rollback => {
+            println!("▶ 回滚版本...");
+            println!("✗ 回滚功能尚未实现");
         }
     }
     Ok(())
