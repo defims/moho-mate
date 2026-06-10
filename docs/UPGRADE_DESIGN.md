@@ -218,8 +218,8 @@ $ moho-mate init
 ### 双仓库架构
 
 ```
-maohou/moho-mate (private)     ← 代码开发，私有
-maohou/moho-mate-releases (public) ← 只放 releases，公开
+defims/moho-mate-dev (private)  ← 代码开发，私有
+defims/moho-mate (public)       ← releases 公开
 ```
 
 **CI 流程：**
@@ -230,7 +230,7 @@ maohou/moho-mate-releases (public) ← 只放 releases，公开
 ### GitHub Release 结构
 
 ```
-maohou/moho-mate releases
+defims/moho-mate releases
 ├── v0.1.0
 │   ├── moho-mate-0.1.0-macos-x64.tar.gz
 │   │   └── moho-mate          # 单一二进制
@@ -343,7 +343,7 @@ jobs:
       - name: Create Release in Public Repo
         uses: softprops/action-gh-release@v2
         with:
-          repository: maohou/moho-mate-releases
+          repository: defims/moho-mate
           token: ${{ secrets.PUBLIC_REPO_TOKEN }}  # 需要有公开仓库写权限的 PAT
           tag: ${{ github.ref_name }}
           name: moho-mate ${{ github.ref_name }}
@@ -477,8 +477,8 @@ echo "配置文件: $INSTALL_DIR/config.json"
 - `src/main.rs` — CLI 命令定义，wrapper.lua 生成
 - `src/app_config.rs` — 跨平台配置管理
 - `src/self_update.rs` — GitHub Release API + 下载替换
-- `.github/workflows/release.yml` — 发布 CI（私有仓库）
-- `maohou/moho-mate-releases` — 公开仓库（只放 releases）
+- `.github/workflows/release.yml` — 发布 CI（私有仓库 defims/moho-mate-dev）
+- `defims/moho-mate` — 公开仓库（releases）
 - `install.sh` — 安装脚本
 
 ### 参考资料

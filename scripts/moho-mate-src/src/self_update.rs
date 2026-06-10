@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::Read;
 
 /// GitHub Release API（公开仓库）
-const RELEASE_API: &str = "https://api.github.com/repos/maohou/moho-mate-releases/releases/latest";
+const RELEASE_API: &str = "https://api.github.com/repos/defims/moho-mate/releases/latest";
 
 /// Release 信息
 #[derive(Debug, Deserialize)]
