@@ -359,10 +359,13 @@ jobs:
 ```bash
 # 一行命令
 # macOS/Linux
-curl -fsSL https://get.maohou.com/moho-mate | bash
+curl -fsSL https://moho-mate.maohou.com/get | bash
 
 # Windows (PowerShell)
-irm https://get.maohou.com/moho-mate.ps1 | iex
+irm https://moho-mate.maohou.com/get.ps1 | iex
+
+# 或直接下载二进制
+# https://moho-mate.maohou.com/download
 ```
 
 ### install.sh 做什么
