@@ -1,6 +1,6 @@
 # moho-mate 升级机制设计
 
-> 版本: 1.0.0  
+> 版本: 1.1.0  
 > 日期: 2026-06-10  
 > 状态: 设计中
 
@@ -12,6 +12,49 @@ moho-mate 是一个独立的 CLI 工具，需要自升级能力以支持：
 - 安全漏洞修补
 
 ## 架构
+
+### 跨平台安装位置
+
+```
+macOS:   ~/Library/Application Support/com.maohou.moho-mate/
+Linux:   ~/.local/share/moho-mate/
+Windows: %APPDATA%\maohou\moho-mate\
+```
+
+**目录结构：**
+
+```
+<app-data-dir>/
+├── bin/
+│   ├── moho-mate          ← 二进制
+│   └── moho-mate.bak      ← 上一版本（回滚用）
+├── lib/
+│   └── libavfilter.10.dylib
+├── config.json            ← 用户配置（设置面板用）
+├── packages/              ← 已安装脚本包
+└── version.json           ← 版本信息
+```
+
+**代码实现：**
+
+```rust
+use dirs::data_dir;
+
+fn app_data_dir() -> PathBuf {
+    let base = data_dir().unwrap_or_default();
+    
+    #[cfg(target_os = "macos")]
+    let path = base.join("com.maohou.moho-mate");
+    
+    #[cfg(target_os = "linux")]
+    let path = base.join("moho-mate");
+    
+    #[cfg(target_os = "windows")]
+    let path = base.join("maohou").join("moho-mate");
+    
+    path
+}
+```
 
 ### 组件关系
 
@@ -28,9 +71,12 @@ moho-mate 是一个独立的 CLI 工具，需要自升级能力以支持：
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   本地安装目录                             │
-│  ~/.openclaw/workspace/skills/moho-mate/scripts/         │
-│  ├── moho-mate          ← 二进制                         │
-│  ├── moho-mate.bak      ← 上一版本（回滚用）              │
+│  ~/Library/Application Support/com.maohou.moho-mate/     │
+│  ├── bin/                                               │
+│  │   ├── moho-mate      ← 二进制                         │
+│  │   └── moho-mate.bak  ← 上一版本（回滚用）              │
+│  ├── config.json        ← 用户配置                       │
+│  ├── packages/          ← 已安装脚本包                   │
 │  └── libavfilter.10.dylib                               │
 └─────────────────────────────────────────────────────────┘
                            │
@@ -136,6 +182,35 @@ $ moho-mate self rollback
 ▶ 备份: 0.1.0 (moho-mate.bak)
 ▶ 回滚中...
 ✓ 已回滚到 0.1.0
+```
+
+### `moho-mate init`
+
+首次安装或配置损坏时运行，自动检测环境并生成配置：
+
+```bash
+$ moho-mate init
+▶ 初始化 moho-mate...
+
+▶ 检测 Moho 安装...
+  ✓ 找到: /Applications/Moho.app
+
+▶ 检测 Moho 配置目录...
+  ✓ 找到: ~/Library/Preferences/Lost Marble/Moho Pro/14
+
+▶ 生成配置文件...
+  ✓ ~/Library/Application Support/com.maohou.moho-mate/config.json
+
+▶ 创建必要目录...
+  ✓ bin/
+  ✓ packages/
+
+✓ 初始化完成
+
+提示:
+  - 运行 'moho-mate --help' 查看命令
+  - 运行 'moho-mate config' 修改设置
+  - 运行 'moho-mate self update' 更新版本
 ```
 
 ## 发布流程
@@ -266,7 +341,7 @@ jobs:
 时机: moho-mate start 时检查（如果距离上次检查 > 7天）
 行为: 
   - 有更新时输出提示（不自动下载）
-  - 记录检查时间到 ~/.moho-mate/last-check
+  - 记录检查时间到 <app-data-dir>/last-check
   - 用户可禁用：moho-mate config set auto-check false
 ```
 
@@ -283,7 +358,11 @@ jobs:
 
 ```bash
 # 一行命令
-curl -fsSL https://raw.githubusercontent.com/maohou/moho-mate/main/install.sh | bash
+# macOS/Linux
+curl -fsSL https://get.maohou.com/moho-mate | bash
+
+# Windows (PowerShell)
+irm https://get.maohou.com/moho-mate.ps1 | iex
 ```
 
 ### install.sh 做什么
@@ -302,26 +381,42 @@ case "$OS-$ARCH" in
   *)              echo "不支持的平台: $OS-$ARCH"; exit 1 ;;
 esac
 
-# 2. 下载最新版本
+# 2. 确定安装目录（跨平台）
+case "$OS" in
+  Darwin)  INSTALL_DIR="$HOME/Library/Application Support/com.maohou.moho-mate" ;;
+  Linux)   INSTALL_DIR="$HOME/.local/share/moho-mate" ;;
+  MINGW*|MSYS*) INSTALL_DIR="$APPDATA/maohou/moho-mate" ;;
+esac
+
+BIN_DIR="$INSTALL_DIR/bin"
+mkdir -p "$BIN_DIR"
+
+# 3. 下载最新版本
+echo "▶ 下载最新版本..."
 LATEST_URL="https://api.github.com/repos/maohou/moho-mate/releases/latest"
-DOWNLOAD_URL=$(curl -s $LATEST_URL | jq -r ".assets[] | select(.name | contains(\"$ARTIFACT.tar.gz\")) | .url")
+DOWNLOAD_URL=$(curl -fsSL "$LATEST_URL" | jq -r ".assets[] | select(.name | contains(\"$ARTIFACT.tar.gz\")) | .browser_download_url")
 
-# 3. 安装到 skill 目录（OpenClaw 管理）
-SKILL_DIR="$HOME/.openclaw/workspace/skills/moho-mate/scripts"
-mkdir -p "$SKILL_DIR"
-curl -L "$DOWNLOAD_URL" | tar -xzf - -C "$SKILL_DIR"
-chmod +x "$SKILL_DIR/moho-mate"
+curl -fsSL "$DOWNLOAD_URL" | tar -xzf - -C "$BIN_DIR"
+chmod +x "$BIN_DIR/moho-mate"
 
-# 4. 验证
-"$SKILL_DIR/moho-mate" --version
+# 4. 初始化配置
+"$BIN_DIR/moho-mate" init
 
-echo "✓ moho-mate 安装完成"
+# 5. 验证
+echo ""
+echo "=== 安装完成 ==="
+"$BIN_DIR/moho-mate" --version
+echo ""
+echo "安装位置: $BIN_DIR/moho-mate"
+echo "配置文件: $INSTALL_DIR/config.json"
 ```
 
 ## 实现优先级
 
 | 优先级 | 任务 | 状态 |
 |--------|------|------|
+| P0 | `moho-mate init` 初始化配置 | 待实现 |
+| P0 | config.rs 重构（跨平台路径） | 待实现 |
 | P0 | `--version` 输出 | 待实现 |
 | P0 | `self check-update` | 待实现 |
 | P0 | `self update` 下载替换 | 待实现 |
