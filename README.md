@@ -1,19 +1,30 @@
 # moho-mate
 
-> Moho 动画软件自动化助手
+> Automation assistant for Moho animation software
 
-## 安装
+## Installation
 
 ```bash
 curl -fsSL https://moho-mate.maohou.com/get | bash
 ```
 
-## 使用
+## Usage
 
 ```bash
 moho-mate --help
 ```
 
-## 许可证
+## Features
+
+- **IPC Mode** - Control Moho via Lua scripts
+- **Rendering** - Batch render projects to PNG/MP4/GIF/APNG
+- **Package Manager** - Install and manage script packages
+- **Self Update** - Built-in upgrade mechanism
+
+## Documentation
+
+- [中文文档 (Chinese)](./README_CN.md)
+
+## License
 
 MIT
