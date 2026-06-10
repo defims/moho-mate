@@ -9,8 +9,8 @@ use sha2::{Sha256, Digest};
 use std::fs::File;
 use std::io::Read;
 
-/// GitHub Release API
-const RELEASE_API: &str = "https://api.github.com/repos/maohou/moho-mate/releases/latest";
+/// GitHub Release API（公开仓库）
+const RELEASE_API: &str = "https://api.github.com/repos/maohou/moho-mate-releases/releases/latest";
 
 /// Release 信息
 #[derive(Debug, Deserialize)]

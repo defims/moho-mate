@@ -215,6 +215,18 @@ $ moho-mate init
 
 ## 发布流程
 
+### 双仓库架构
+
+```
+maohou/moho-mate (private)     ← 代码开发，私有
+maohou/moho-mate-releases (public) ← 只放 releases，公开
+```
+
+**CI 流程：**
+```
+私有仓库 push tag → CI 构建 → 发布到公开仓库 release
+```
+
 ### GitHub Release 结构
 
 ```
@@ -257,10 +269,10 @@ maohou/moho-mate releases
 }
 ```
 
-### CI/CD 流程
+### CI/CD 流程（双仓库）
 
 ```yaml
-# .github/workflows/release.yml
+# .github/workflows/release.yml (私有仓库)
 name: Release
 
 on:
@@ -269,6 +281,7 @@ on:
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
@@ -282,7 +295,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: windows-x64
 
-    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       
@@ -297,24 +309,52 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          tar -czf moho-mate-${{ steps.version.outputs.version }}-${{ matrix.artifact }}.tar.gz \
+          tar -czf moho-mate-${{ github.ref_name }}-${{ matrix.artifact }}.tar.gz \
             -C target/${{ matrix.target }}/release moho-mate
           shasum -a 256 moho-mate-*.tar.gz > moho-mate-*.tar.gz.sha256
       
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          7z a moho-mate-${{ steps.version.outputs.version }}-${{ matrix.artifact }}.zip `
+          7z a moho-mate-${{ github.ref_name }}-${{ matrix.artifact }}.zip `
             target\${{ matrix.target }}\release\moho-mate.exe
           certutil -hashfile moho-mate-*.zip SHA256 > moho-mate-*.zip.sha256
       
-      - uses: softprops/action-gh-release@v2
+      # 上传 artifacts
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: ${{ matrix.artifact }}
+          path: |
             moho-mate-*.tar.gz
             moho-mate-*.tar.gz.sha256
             moho-mate-*.zip
             moho-mate-*.zip.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # 下载所有 artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      # 推送到公开仓库
+      - name: Create Release in Public Repo
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: maohou/moho-mate-releases
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}  # 需要有公开仓库写权限的 PAT
+          tag: ${{ github.ref_name }}
+          name: moho-mate ${{ github.ref_name }}
+          body: |
+            ## Changes
+            
+            See [private repo](${{ github.server_url }}/${{ github.repository }}) for details.
+          files: |
+            artifacts/**/*
+          draft: false
+          prerelease: false
 ```
 
 ## 升级策略
@@ -435,8 +475,10 @@ echo "配置文件: $INSTALL_DIR/config.json"
 ### 相关文件
 
 - `src/main.rs` — CLI 命令定义，wrapper.lua 生成
-- `src/config.rs` — 配置常量（需重构去除硬编码）
-- `.github/workflows/release.yml` — 发布 CI
+- `src/app_config.rs` — 跨平台配置管理
+- `src/self_update.rs` — GitHub Release API + 下载替换
+- `.github/workflows/release.yml` — 发布 CI（私有仓库）
+- `maohou/moho-mate-releases` — 公开仓库（只放 releases）
 - `install.sh` — 安装脚本
 
 ### 参考资料
