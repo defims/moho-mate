@@ -278,6 +278,12 @@ enum Commands {
         #[command(subcommand)]
         action: PkgCommands,
     },
+
+    /// mohoscripts.com 脚本搜索与安装
+    Mohoscripts {
+        #[command(subcommand)]
+        action: MohoscriptsCommands,
+    },
 }
 
 /// 包管理子命令
@@ -350,6 +356,25 @@ enum PkgCommands {
     Prune,
 }
 
+/// mohoscripts.com 子命令
+#[derive(Subcommand)]
+enum MohoscriptsCommands {
+    /// 搜索脚本
+    Search {
+        /// 搜索关键词
+        keyword: String,
+        /// 获取页数（默认 1）
+        #[arg(short, long, default_value = "1")]
+        pages: usize,
+    },
+
+    /// 安装脚本
+    Install {
+        /// 脚本 slug
+        slug: String,
+    },
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -389,6 +414,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Pkg { action }) => {
             cmd_pkg(action)?;
+        }
+        Some(Commands::Mohoscripts { action }) => {
+            cmd_mohoscripts(action)?;
         }
     }
 
@@ -1194,11 +1222,9 @@ fn cmd_pkg(action: PkgCommands) -> Result<()> {
         PkgCommands::Install { package } => {
             let path = std::path::Path::new(&package);
             if path.exists() {
-                // 本地文件安装
                 pm.install_local(path)?;
             } else {
-                // 从 registry 安装
-                pm.install_from_registry(&package, None)?;
+                anyhow::bail!("从 registry 安装暂未实现，请使用本地文件: moho-mate pkg install ./package.zip");
             }
         }
         PkgCommands::Uninstall { package } => {
@@ -1246,21 +1272,8 @@ fn cmd_pkg(action: PkgCommands) -> Result<()> {
                 if let Some(ref author) = pkg.author {
                     println!("作者: {}", author.name());
                 }
-                if let Some(ref license) = pkg.license {
-                    println!("许可: {}", license);
-                }
                 if let Some(ref main) = pkg.main {
                     println!("入口: {}", main);
-                }
-                if let Some(ref moho) = pkg.moho {
-                    if let Some(ref tools) = moho.tools {
-                        if !tools.is_empty() {
-                            println!("\n工具:");
-                            for tool in tools {
-                                println!("  {} ({})", tool.id, tool.name);
-                            }
-                        }
-                    }
                 }
                 println!("\n路径: {}/{}/", pm.get_packages_dir().display(), package);
             } else {
@@ -1285,9 +1298,6 @@ fn cmd_pkg(action: PkgCommands) -> Result<()> {
             }
         }
         PkgCommands::Search { keyword } => {
-            println!("▶ 搜索: {}", keyword);
-            println!("  Registry: {}", pm.get_config().registry);
-            
             let results = pm.search(&keyword)?;
             let count = results.len();
             
@@ -1322,7 +1332,7 @@ fn cmd_pkg(action: PkgCommands) -> Result<()> {
             println!("✓ registry 已更新: {}", new_registry);
         }
         PkgCommands::Create { name, output } => {
-            let output_dir = output.map(|s| std::path::PathBuf::from(s));
+            let output_dir = output.map(std::path::PathBuf::from);
             pm.create(&name, output_dir.as_deref())?;
         }
         PkgCommands::Pack { dir } => {
@@ -1337,6 +1347,37 @@ fn cmd_pkg(action: PkgCommands) -> Result<()> {
         }
     }
     
+    Ok(())
+}
+
+fn cmd_mohoscripts(action: MohoscriptsCommands) -> Result<()> {
+    use pkg::PackageManager;
+    let pm = PackageManager::new()?;
+    match action {
+        MohoscriptsCommands::Search { keyword, pages } => {
+            let max_pages = if pages > 1 { Some(pages) } else { None };
+            let results = pm.search_mohoscripts_paged(&keyword, max_pages)?;
+            let count = results.len();
+            
+            if results.is_empty() {
+                println!("\n✗ 未找到匹配的脚本");
+            } else {
+                println!("\n=== mohoscripts.com 搜索结果 ===");
+                for r in &results {
+                    println!("\n{} ({})", r.name, r.slug);
+                    if let Some(ref desc) = r.description {
+                        println!("  描述: {}", desc);
+                    }
+                    println!("  下载量: {}", r.downloads);
+                }
+                println!("\n共 {} 个结果", count);
+                println!("\n安装: moho-mate mohoscripts install <slug>");
+            }
+        }
+        MohoscriptsCommands::Install { slug } => {
+            pm.install_mohoscripts(&slug)?;
+        }
+    }
     Ok(())
 }
 

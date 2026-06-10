@@ -28,6 +28,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 pathdiff = "0.2"
+ureq = { version = "2", features = ["cookies"] }
+scraper = "0.19"
+walkdir = "2"
 
 # FFmpeg 绑定已替换为自定义 FFI（见 src/ffmpeg_ffi.rs）
 # 不再依赖 rusty_ffmpeg
