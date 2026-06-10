@@ -1,8 +1,8 @@
 # moho-mate 升级机制设计
 
-> 版本: 1.1.0  
+> 版本: 1.2.0  
 > 日期: 2026-06-10  
-> 状态: 设计中
+> 状态: P0 已实现
 
 ## 概述
 
@@ -418,12 +418,12 @@ echo "配置文件: $INSTALL_DIR/config.json"
 
 | 优先级 | 任务 | 状态 |
 |--------|------|------|
-| P0 | `moho-mate init` 初始化配置 | 待实现 |
-| P0 | config.rs 重构（跨平台路径） | 待实现 |
-| P0 | `--version` 输出 | 待实现 |
-| P0 | `self check-update` | 待实现 |
-| P0 | `self update` 下载替换 | 待实现 |
-| P0 | SHA256 校验 | 待实现 |
+| P0 | `moho-mate init` 初始化配置 | ✅ 已实现 |
+| P0 | config.rs 重构（跨平台路径） | ✅ 已实现 |
+| P0 | `--version` 输出 | ✅ 已实现 |
+| P0 | `self check-update` | ✅ 已实现 |
+| P0 | `self update` 下载替换 | ✅ 已实现 |
+| P0 | SHA256 校验 | ✅ 已实现 |
 | P1 | GitHub Release CI | 待搭建 |
 | P1 | install.sh | 待编写 |
 | P2 | `self rollback` | 待实现 |
