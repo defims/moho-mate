@@ -1,0 +1,22 @@
+{
+  "version": "0.1.0",
+  "notes": "安全加固 + 多源自升级 + 跨平台 CI/CD",
+  "published_at": "2026-06-11T15:39:13Z",
+  "assets": {
+    "macos-arm64": {
+      "url": "https://github.com/defims/moho-mate/releases/download/v0.1.0/moho-mate-v0.1.0-macos-arm64.tar.gz",
+      "sha256": "d1ebeda05121c97226926210eded69fa09d3cb1843ed20ce23359c0f8e4790fd",
+      "size": 2373557
+    },
+    "macos-x64": {
+      "url": "https://github.com/defims/moho-mate/releases/download/v0.1.0/moho-mate-v0.1.0-macos-x64.tar.gz",
+      "sha256": "eca9ad623f7bfd438317d12ca6773e218e138ff112eb31604764974516cbe8c3",
+      "size": 2609421
+    },
+    "windows-x64": {
+      "url": "https://github.com/defims/moho-mate/releases/download/v0.1.0/moho-mate-v0.1.0-windows-x64.zip",
+      "sha256": "1d6e7f808df5b5bacb2bea5d438a3d303df1c53d008747f10c45f009307a3dd3",
+      "size": 2197964
+    }
+  }
+}
