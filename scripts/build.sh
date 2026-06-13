@@ -75,7 +75,9 @@ cd "$(dirname "$0")/moho-mate-src"
 # 符号链接让 @executable_path/../Frameworks 自动指向 Moho Frameworks。
 #
 if [ "$(uname)" = "Darwin" ]; then
-    PROJECT_ROOT="$(cd .. && pwd)"
+    # 注意：build.sh 在 scripts/moho-mate-src/ 中执行
+    # .. = scripts/，所以需要 ../.. 才能到达项目根目录
+    PROJECT_ROOT="$(cd ../.. && pwd)"
     FRAMEWORKS_LINK="$PROJECT_ROOT/Frameworks"
     MOHO_FRAMEWORKS="/Applications/Moho.app/Contents/Frameworks"
     
