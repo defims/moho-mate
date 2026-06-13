@@ -4,22 +4,39 @@ use std::path::Path;
 
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap(); // msvc or gnu
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     
-    // Lua 库配置（根据目标平台选择）
+    // 检查是否启用 ffmpeg-builtin feature
+    let ffmpeg_builtin = std::env::var("CARGO_FEATURE_FFMPEG_BUILTIN").is_ok();
+    
+    // Lua 库配置（根据目标平台和架构选择）
     let lua_dir = manifest_dir.clone() + "/lua-src";
+    let is_msvc = target_os == "windows" && target_env == "msvc";
+    
     let lua_lib_dir = if target_os == "windows" {
-        // Windows 使用交叉编译的 Lua
-        lua_dir.clone() + "/lib-mingw"
+        // Windows: 区分 MSVC 和 MinGW
+        if target_env == "msvc" {
+            lua_dir.clone() + "/lib-msvc"
+        } else {
+            lua_dir.clone() + "/lib-mingw"
+        }
+    } else if target_os == "macos" {
+        // macOS 按架构分目录
+        let arch_dir = if target_arch == "aarch64" { "lib-arm64" } else { "lib-x64" };
+        lua_dir.clone() + "/" + arch_dir
     } else {
-        // macOS 使用原生 Lua
         lua_dir.clone() + "/lib"
     };
     
     // 检查 Lua 库是否存在，如果不存在则编译
-    let lua_lib_path = Path::new(&lua_lib_dir).join("liblua.a");
+    // 注意：MSVC 的库文件名是 lua.lib，其他平台是 liblua.a
+    let lib_name = if is_msvc { "lua.lib" } else { "liblua.a" };
+    let lua_lib_path = Path::new(&lua_lib_dir).join(lib_name);
+    
     if !lua_lib_path.exists() {
-        compile_lua(&target_os, &lua_dir, &lua_lib_dir);
+        compile_lua_with_cc(&target_os, &target_arch, &lua_dir, &lua_lib_dir, is_msvc);
     }
     
     // 告诉 cargo 链接 Lua 静态库
@@ -32,6 +49,11 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-export_dynamic");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
         println!("cargo:rustc-link-lib=dylib=System");
+        
+        // ffmpeg-builtin: 链接 Moho 内置的 FFmpeg 库
+        if ffmpeg_builtin {
+            link_moho_ffmpeg();
+        }
     } else if target_os == "windows" {
         // Windows: 需要链接一些系统库
         println!("cargo:rustc-link-lib=dylib=user32");
@@ -39,47 +61,13 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=kernel32");
     }
     
-    // FFmpeg 内置库配置（仅 macOS）
-    if target_os == "macos" {
-        #[cfg(feature = "ffmpeg-builtin")]
-        {
-            let moho_fw = "/Applications/Moho.app/Contents/Frameworks";
-            let scripts_dir = "/Users/def/.openclaw/workspace/skills/moho-mate/scripts";
-            
-            println!("cargo:rustc-link-search=native={}", moho_fw);
-            println!("cargo:rustc-link-search=native={}", scripts_dir);
-            
-            println!("cargo:rustc-link-lib=dylib=avfilter.10");
-            println!("cargo:rustc-link-lib=dylib=avcodec.61");
-            println!("cargo:rustc-link-lib=dylib=avformat.61");
-            println!("cargo:rustc-link-lib=dylib=avutil.59");
-            println!("cargo:rustc-link-lib=dylib=swscale.8");
-            println!("cargo:rustc-link-lib=dylib=swresample.5");
-            
-            // 设置 LC_RPATH，让二进制能找到 Moho 的 FFmpeg 库
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", moho_fw);
-            
-            // 使用 @rpath 替代 @executable_path，这样运行时会在 rpath 中搜索
-            // macOS 默认使用 @executable_path/../Frameworks，需要改成 @rpath
-            println!("cargo:rustc-link-arg=-Wl,-headerpad_max_install_names");
-        }
-        
-        // 生成 FFmpeg FFI 绑定（可选，仅在 ffmpeg-builtin feature 且 bindgen 可用时）
-        #[cfg(feature = "ffmpeg-builtin")]
-        {
-            if env::var("CARGO_FEATURE_FFMPEG_BUILTIN").is_ok() {
-                generate_ffmpeg_bindings();
-            }
-        }
-    }
-    
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-/// 编译 Lua（根据目标平台）
-fn compile_lua(target_os: &str, lua_src_dir: &str, lua_lib_dir: &str) {
-    println!("cargo:warning=Lua 库不存在，开始编译...");
-    println!("cargo:warning=目标平台: {}", target_os);
+/// 使用 cc crate 编译 Lua（自动处理 MSVC 环境）
+fn compile_lua_with_cc(target_os: &str, target_arch: &str, lua_src_dir: &str, lua_lib_dir: &str, _is_msvc: bool) {
+    println!("cargo:warning=Lua 库不存在，开始编译（使用 cc crate）...");
+    println!("cargo:warning=目标平台: {} ({})", target_os, target_arch);
     println!("cargo:warning=源码目录: {}", lua_src_dir);
     println!("cargo:warning=输出目录: {}", lua_lib_dir);
     
@@ -92,16 +80,6 @@ fn compile_lua(target_os: &str, lua_src_dir: &str, lua_lib_dir: &str) {
         panic!("Lua 源码目录不存在: {:?}", src_dir);
     }
     
-    // 根据目标平台选择编译命令
-    let (cc, ar, extra_flags) = if target_os == "windows" {
-        // 使用 MinGW 交叉编译
-        ("x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-ar", vec!["-DLUA_USE_WINDOWS"])
-    } else if target_os == "macos" {
-        ("gcc", "ar", vec!["-DLUA_USE_MACOSX", "-fPIC"])
-    } else {
-        ("gcc", "ar", vec!["-DLUA_USE_LINUX", "-fPIC"])
-    };
-    
     // Lua 源文件列表
     let lua_sources = [
         "lapi.c", "lauxlib.c", "lbaselib.c", "lcode.c", "lcorolib.c",
@@ -113,184 +91,162 @@ fn compile_lua(target_os: &str, lua_src_dir: &str, lua_lib_dir: &str) {
         "lvm.c", "lzio.c",
     ];
     
-    // 编译所有 .c 文件为 .o 文件
-    let mut obj_files = Vec::new();
+    // 使用 cc::Build 编译
+    let mut build = cc::Build::new();
+    
+    // 设置编译器标志
+    if target_os == "windows" {
+        build.define("LUA_USE_WINDOWS", None);
+    } else if target_os == "macos" {
+        build.define("LUA_USE_MACOSX", None);
+        
+        // 交叉编译：指定目标架构
+        if target_arch == "aarch64" {
+            build.flag("-target").flag("arm64-apple-macos11");
+        } else if target_arch == "x86_64" {
+            build.flag("-target").flag("x86_64-apple-macos10.12");
+        }
+    } else {
+        build.define("LUA_USE_LINUX", None);
+    }
+    
+    // 添加源文件
     for src in &lua_sources {
         let src_path = src_dir.join(src);
-        let obj_file = format!("{}.o", src.replace(".c", ""));
-        let obj_path = Path::new(lua_lib_dir).join(&obj_file);
-        
         if src_path.exists() {
-            let mut cmd = std::process::Command::new(cc);
-            cmd.arg("-c")
-               .arg("-O2")
-               .args(&extra_flags)
-               .arg("-I").arg(&src_dir)
-               .arg(&src_path)
-               .arg("-o").arg(&obj_path);
-            
-            let status = cmd.current_dir(&src_dir).status()
-                .expect(&format!("Failed to compile {}", src));
-            
-            if !status.success() {
-                panic!("Failed to compile {}", src);
-            }
-            
-            obj_files.push(obj_path);
+            build.file(&src_path);
         }
     }
     
-    // 打包为静态库
+    // 设置包含路径
+    build.include(&src_dir);
+    
+    // 编译
     let lib_path = Path::new(lua_lib_dir).join("liblua.a");
-    let mut ar_cmd = std::process::Command::new(ar);
-    ar_cmd.arg("rcs").arg(&lib_path);
-    for obj in &obj_files {
-        ar_cmd.arg(obj);
-    }
+    build.compile("lua");
     
-    let status = ar_cmd.status().expect("Failed to run ar");
-    if !status.success() {
-        panic!("Failed to create liblua.a");
-    }
+    // cc::Build 会自动生成库文件到 OUT_DIR，我们需要复制到目标目录
+    // 获取 OUT_DIR
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let out_lib = Path::new(&out_dir).join("liblua.a");
     
-    // 清理 .o 文件
-    for obj in &obj_files {
-        let _ = fs::remove_file(obj);
+    // 复制库文件到目标目录
+    if out_lib.exists() {
+        fs::copy(&out_lib, &lib_path).expect("Failed to copy liblua.a");
+        println!("cargo:warning=Lua 编译完成: {:?}", lib_path);
+    } else {
+        // MSVC 可能生成 lua.lib
+        let out_lib_msvc = Path::new(&out_dir).join("lua.lib");
+        let lib_path_msvc = Path::new(lua_lib_dir).join("lua.lib");
+        if out_lib_msvc.exists() {
+            fs::copy(&out_lib_msvc, &lib_path_msvc).expect("Failed to copy lua.lib");
+            println!("cargo:warning=Lua 编译完成: {:?}", lib_path_msvc);
+        } else {
+            println!("cargo:warning=Lua 编译完成（库在 OUT_DIR）");
+        }
     }
-    
-    println!("cargo:warning=Lua 编译完成: {:?}", lib_path);
 }
 
-/// 生成 FFmpeg FFI 绑定
+/// 链接 Moho 内置的 FFmpeg 库
 /// 
-/// 原理：
-/// 1. 下载 FFmpeg 源码头文件（指定版本）
-/// 2. 用 bindgen 库生成 Rust 绑定
-/// 3. 输出到 OUT_DIR/ffmpeg_bindings.rs
+/// ## 库位置
 /// 
-/// 使用：
-/// - 首次运行或 FFmpeg 版本更新时自动下载头文件
-/// - 生成的绑定在编译时可用：include!(concat!(env!("OUT_DIR"), "/ffmpeg_bindings.rs"));
-#[cfg(feature = "ffmpeg-builtin")]
-fn generate_ffmpeg_bindings() {
-    use bindgen::Builder;
+/// - Moho 内置：`/Applications/Moho.app/Contents/Frameworks/`
+/// - libavfilter：`scripts/libavfilter.10.dylib`（Moho 没有内置）
+/// 
+/// ## 库路径问题
+/// 
+/// Moho 内置的 FFmpeg 使用 `@executable_path/../Frameworks/` 路径
+/// 这对 moho-mate 不适用（不在 Moho.app 目录）
+/// 
+/// ## 解决方案
+/// 
+/// 1. 编译时设置 rpath 指向 scripts 目录
+/// 2. 编译后使用 `install_name_tool` 修改库路径为绝对路径（见 build.sh）
+/// 
+/// ## 关键点
+/// 
+/// - libavfilter.10.dylib 保留在 scripts 目录，不复制到 Moho Frameworks
+/// - rpath 让运行时能找到 scripts 目录的 libavfilter
+/// - install_name_tool 让运行时能找到 Moho Frameworks 的其他库
+/// 
+/// ## 相关文件
+/// 
+/// - build.sh: 执行 install_name_tool 修改库路径
+/// - encode_native.rs: check_avfilter_available() 检查 scripts 目录
+/// 
+/// ## 运行时加载
+/// 
+/// 无需设置环境变量，所有路径在编译时已正确配置。
+fn link_moho_ffmpeg() {
+    let moho_frameworks = "/Applications/Moho.app/Contents/Frameworks";
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let scripts_dir = manifest_dir.clone() + "/.."; // scripts/ 目录
     
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let bindings_path = Path::new(&out_dir).join("ffmpeg_bindings.rs");
-    let ffmpeg_headers_dir = Path::new(&manifest_dir).join("ffmpeg-headers");
-    let ffmpeg_version = "n7.1";  // FFmpeg 版本，与 Moho 内置版本对应
-    
-    // 检查是否需要重新生成
-    if bindings_path.exists() {
-        println!("cargo:warning=FFmpeg bindings already exist, skipping generation");
+    // 检查 Moho Frameworks 目录
+    if !Path::new(moho_frameworks).exists() {
+        println!("cargo:warning=Moho Frameworks 目录不存在: {}", moho_frameworks);
         return;
     }
     
-    // 下载 FFmpeg 头文件（如果不存在）
-    let ffmpeg_src_dir = ffmpeg_headers_dir.join(format!("FFmpeg-{}", ffmpeg_version));
-    if !ffmpeg_src_dir.exists() {
-        fs::create_dir_all(&ffmpeg_headers_dir).expect("Failed to create ffmpeg-headers dir");
-        
-        let tar_path = ffmpeg_headers_dir.join("ffmpeg.tar.gz");
-        let tar_url = format!(
-            "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/{}.tar.gz",
-            ffmpeg_version
-        );
-        
-        println!("cargo:warning=Downloading FFmpeg {} headers...", ffmpeg_version);
-        
-        // 使用 curl 下载
-        let status = std::process::Command::new("curl")
-            .args(["-L", "-o", tar_path.to_str().unwrap(), &tar_url])
-            .status()
-            .expect("Failed to run curl");
-        
-        if !status.success() {
-            println!("cargo:warning=Failed to download FFmpeg headers from {}", tar_url);
-            println!("cargo:warning=FFI bindings will not be updated. Using existing bindings if available.");
-            return;
-        }
-        
-        // 解压
-        println!("cargo:warning=Extracting FFmpeg headers...");
-        let status = std::process::Command::new("tar")
-            .args(["xzf", tar_path.to_str().unwrap(), "-C", ffmpeg_headers_dir.to_str().unwrap()])
-            .status()
-            .expect("Failed to run tar");
-        
-        if !status.success() {
-            println!("cargo:warning=Failed to extract FFmpeg headers");
-            println!("cargo:warning=FFI bindings will not be updated.");
-            return;
-        }
-        
-        // 删除 tar 包
-        let _ = fs::remove_file(&tar_path);
+    // 检查 scripts 目录中的 libavfilter
+    let libavfilter_path = Path::new(&scripts_dir).join("libavfilter.10.dylib");
+    if !libavfilter_path.exists() {
+        println!("cargo:warning=libavfilter 不存在: {:?}", libavfilter_path);
+        println!("cargo:warning=请确保 scripts/ 目录中有 libavfilter.10.dylib");
+        return;
     }
     
-    // 创建最小配置文件（bindgen 需要）
-    let avconfig_path = ffmpeg_src_dir.join("libavutil/avconfig.h");
-    if !avconfig_path.exists() {
-        fs::write(&avconfig_path, "// Minimal config for bindgen\n")
-            .expect("Failed to create avconfig.h");
-    }
+    // 添加库搜索路径
+    // Moho 内置库
+    println!("cargo:rustc-link-search=native={}", moho_frameworks);
+    // scripts 目录的 libavfilter
+    println!("cargo:rustc-link-search=native={}", scripts_dir);
     
-    // 生成绑定（使用 bindgen 库）
-    println!("cargo:warning=Generating FFmpeg FFI bindings...");
+    // 链接 FFmpeg 库（顺序很重要：依赖关系）
+    // avfilter -> avformat -> avcodec -> swscale -> swresample -> avutil
+    println!("cargo:rustc-link-lib=dylib=avfilter.10");
+    println!("cargo:rustc-link-lib=dylib=avformat.61");
+    println!("cargo:rustc-link-lib=dylib=avcodec.61");
+    println!("cargo:rustc-link-lib=dylib=swscale.8");
+    println!("cargo:rustc-link-lib=dylib=swresample.5");
+    println!("cargo:rustc-link-lib=dylib=avutil.59");
     
-    // 需要生成的头文件
-    let headers = [
-        ("libavcodec/avcodec.h", "libavcodec_bindings.rs"),
-        ("libavformat/avformat.h", "libavformat_bindings.rs"), 
-        ("libavutil/avutil.h", "libavutil_bindings.rs"),
-        ("libavutil/frame.h", "libavutil_frame_bindings.rs"),
-        ("libswscale/swscale.h", "libswscale_bindings.rs"),
-    ];
+    // 设置 rpath，让运行时能找到 scripts 目录的 libavfilter
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", scripts_dir);
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", moho_frameworks);
     
-    let clang_args = vec![format!("-I{}", ffmpeg_src_dir.display())];
+    // 生成 post-build 脚本，用 install_name_tool 修改库路径
+    // 这在 cargo 构建完成后执行
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let post_build_script = Path::new(&out_dir).join("post-build.sh");
     
-    for (header, output_name) in &headers {
-        let header_path = ffmpeg_src_dir.join(header);
-        if !header_path.exists() {
-            continue;
-        }
-        
-        let output_path = Path::new(&out_dir).join(output_name);
-        
-        let bindings = Builder::default()
-            .header(header_path.to_str().unwrap())
-            .clang_args(&clang_args)
-            .generate();
-        
-        match bindings {
-            Ok(b) => {
-                b.write_to_file(&output_path)
-                    .expect("Failed to write bindings");
-                println!("cargo:warning=Generated: {}", output_name);
-            }
-            Err(e) => {
-                println!("cargo:warning=Failed to generate bindings for {}: {:?}", header, e);
-            }
-        }
-    }
+    let script_content = format!(r#"#!/bin/bash
+# post-build.sh - 修改 FFmpeg 库路径
+# 由 build.rs 自动生成
+
+MOHO_MATE="$1"
+
+if [ ! -f "$MOHO_MATE" ]; then
+    echo "moho-mate not found: $MOHO_MATE"
+    exit 1
+fi
+
+# 修改 Moho 内置库的路径为绝对路径
+install_name_tool -change "@executable_path/../Frameworks/libavcodec.61.dylib" "/Applications/Moho.app/Contents/Frameworks/libavcodec.61.dylib" "$MOHO_MATE" 2>/dev/null || true
+install_name_tool -change "@executable_path/../Frameworks/libavformat.61.dylib" "/Applications/Moho.app/Contents/Frameworks/libavformat.61.dylib" "$MOHO_MATE" 2>/dev/null || true
+install_name_tool -change "@executable_path/../Frameworks/libavutil.59.dylib" "/Applications/Moho.app/Contents/Frameworks/libavutil.59.dylib" "$MOHO_MATE" 2>/dev/null || true
+install_name_tool -change "@executable_path/../Frameworks/libswscale.8.dylib" "/Applications/Moho.app/Contents/Frameworks/libswscale.8.dylib" "$MOHO_MATE" 2>/dev/null || true
+install_name_tool -change "@executable_path/../Frameworks/libswresample.5.dylib" "/Applications/Moho.app/Contents/Frameworks/libswresample.5.dylib" "$MOHO_MATE" 2>/dev/null || true
+
+echo "✓ FFmpeg 库路径已修改"
+"#);
     
-    // 生成一个汇总文件
-    let summary_path = Path::new(&out_dir).join("ffmpeg_bindings.rs");
-    let mut summary_content = String::new();
-    summary_content.push_str("// Auto-generated FFmpeg FFI bindings\n");
-    summary_content.push_str("// Generated by build.rs using bindgen library\n\n");
+    std::fs::write(&post_build_script, script_content).expect("Failed to write post-build script");
     
-    for (_, output_name) in &headers {
-        let binding_path = Path::new(&out_dir).join(output_name);
-        if binding_path.exists() {
-            summary_content.push_str(&format!("mod {} {{\n", 
-                output_name.replace(".rs", "")));
-            summary_content.push_str(&format!("    include!(\"{}\");\n", output_name));
-            summary_content.push_str("}\n\n");
-        }
-    }
-    
-    fs::write(&summary_path, summary_content).expect("Failed to write summary");
-    println!("cargo:warning=FFmpeg bindings generated successfully");
+    println!("cargo:warning=已配置链接 FFmpeg:");
+    println!("cargo:warning=  - Moho 内置: {}", moho_frameworks);
+    println!("cargo:warning=  - libavfilter: {}", scripts_dir);
+    println!("cargo:warning=运行构建后，执行以下命令修改库路径:");
+    println!("cargo:warning=  bash {} $PWD/target/release/moho-mate", post_build_script.display());
 }

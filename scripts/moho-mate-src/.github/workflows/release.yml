@@ -19,6 +19,9 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: windows-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-x64
 
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +30,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      
+      # Linux 需要安装 FFmpeg 开发库
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libavfilter-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev pkg-config
       
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -47,6 +57,14 @@ jobs:
           cd ../../..
           certutil -hashfile moho-mate-${{ github.ref_name }}-${{ matrix.artifact }}.zip SHA256 > moho-mate-${{ github.ref_name }}-${{ matrix.artifact }}.zip.sha256
       
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czf ../../../moho-mate-${{ github.ref_name }}-${{ matrix.artifact }}.tar.gz moho-mate
+          cd ../../..
+          sha256sum moho-mate-*.tar.gz > moho-mate-${{ github.ref_name }}-${{ matrix.artifact }}.tar.gz.sha256
+      
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -56,8 +74,55 @@ jobs:
             moho-mate-*.zip
             moho-mate-*.zip.sha256
 
+  # Windows 需要额外打包 DLL 文件
+  # avfilter-10.dll 和 avutil-59.dll 用于 GIF 编码
+  # 通过交叉编译生成（MinGW-w64）
+  build-windows-dll:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install MinGW-w64
+        run: sudo apt-get install -y mingw-w64
+      
+      - name: Download FFmpeg source
+        run: |
+          git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git
+          cd FFmpeg
+          
+          ./configure \
+            --arch=x86_64 \
+            --target-os=mingw64 \
+            --cross-prefix=x86_64-w64-mingw32- \
+            --enable-shared \
+            --disable-static \
+            --disable-programs \
+            --disable-doc \
+            --disable-x86asm \
+            --enable-avfilter \
+            --enable-avutil
+          
+          make -j$(nproc)
+      
+      - name: Package Windows DLLs
+        run: |
+          mkdir -p windows-dlls
+          cp FFmpeg/libavfilter/avfilter-10.dll windows-dlls/
+          cp FFmpeg/libavutil/avutil-59.dll windows-dlls/
+          cd windows-dlls
+          7z a ../moho-mate-${{ github.ref_name }}-windows-dlls.zip *.dll
+          cd ..
+          sha256sum moho-mate-*.zip > moho-mate-${{ github.ref_name }}-windows-dlls.zip.sha256
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dlls
+          path: |
+            moho-mate-*.zip
+            moho-mate-*.zip.sha256
+
   release:
-    needs: build
+    needs: [build, build-windows-dll]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -81,16 +146,41 @@ jobs:
             
             ### 下载
             
-            | 平台 | 文件 |
-            |------|------|
-            | macOS (Intel) | `moho-mate-${{ github.ref_name }}-macos-x64.tar.gz` |
-            | macOS (Apple Silicon) | `moho-mate-${{ github.ref_name }}-macos-arm64.tar.gz` |
-            | Windows | `moho-mate-${{ github.ref_name }}-windows-x64.zip` |
+            | 平台 | 文件 | 说明 |
+            |------|------|------|
+            | macOS (Intel) | `moho-mate-${{ github.ref_name }}-macos-x64.tar.gz` | - |
+            | macOS (Apple Silicon) | `moho-mate-${{ github.ref_name }}-macos-arm64.tar.gz` | - |
+            | Windows | `moho-mate-${{ github.ref_name }}-windows-x64.zip` | 主程序 |
+            | Windows DLLs | `moho-mate-${{ github.ref_name }}-windows-dlls.zip` | avfilter-10.dll + avutil-59.dll |
+            | Linux | `moho-mate-${{ github.ref_name }}-linux-x64.tar.gz` | 需系统安装 libavfilter |
             
             ### 安装
             
             ```bash
             curl -fsSL https://moho-mate.maohou.com/get | bash
+            ```
+            
+            ### Windows 用户额外步骤
+            
+            1. 下载 `moho-mate-*-windows-dlls.zip`
+            2. 解压到 moho-mate.exe 同目录
+            3. 确保目录结构：
+               ```
+               scripts/
+               ├── moho-mate.exe
+               ├── avfilter-10.dll    ← 从 windows-dlls.zip 解压
+               └── avutil-59.dll      ← 从 windows-dlls.zip 解压
+               ```
+            
+            ### Linux 用户
+            
+            需要安装 FFmpeg 开发库：
+            ```bash
+            # Ubuntu/Debian
+            sudo apt install libavfilter-dev libavformat-dev libavcodec-dev libswscale-dev
+            
+            # Fedora
+            sudo dnf install ffmpeg-devel
             ```
             
             ### 校验

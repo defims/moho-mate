@@ -337,8 +337,26 @@ extern "C" {
 }
 
 // libavfilter
+// 
+// ## 关键说明
+// 
+// - libavfilter.10.dylib 在 **scripts 目录**，不在 Moho Frameworks
+// - 使用 @rpath 路径，rpath 在 build.rs 中设置
+// - GIF 编码需要 libavfilter 做调色板优化
+// 
+// ## 滤镜链
+// 
+// GIF 调色板优化使用以下滤镜：
+// - palettegen: 生成调色板
+// - paletteuse: 应用调色板
+// - split: 分流
+// - format: 格式转换
+// 
+// ## 相关文件
+// 
+// - build.rs: 设置 rpath
+// - encode_native.rs: encode_gif_with_palette()
 #[cfg(target_os = "macos")]
-#[link(name = "avfilter.10", kind = "dylib")]
 extern "C" {
     pub fn avfilter_graph_alloc() -> *mut AVFilterGraph;
     pub fn avfilter_graph_free(graph: *mut *mut AVFilterGraph);

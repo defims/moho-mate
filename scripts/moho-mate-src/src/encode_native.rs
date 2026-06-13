@@ -1,32 +1,206 @@
 //! FFmpeg 原生编码模块
 //!
 //! 使用自定义 FFI 绑定 Moho 内置 FFmpeg 库
+//!
+//! ## 库配置
+//!
+//! ### macOS
+//!
+//! | 库 | 位置 | 路径类型 |
+//! |----|------|----------|
+//! | libavcodec.61.dylib | Moho Frameworks | 绝对路径（install_name_tool） |
+//! | libavformat.61.dylib | Moho Frameworks | 绝对路径 |
+//! | libavutil.59.dylib | Moho Frameworks | 绝对路径 |
+//! | libswscale.8.dylib | Moho Frameworks | 绝对路径 |
+//! | libswresample.5.dylib | Moho Frameworks | 绝对路径 |
+//! | libavfilter.10.dylib | **scripts/** | `@rpath/`（通过 rpath） |
+//!
+//! ### Windows
+//!
+//! | 库 | 位置 | 路径类型 |
+//! |----|------|----------|
+//! | avcodec-61.dll | Moho 目录 | PATH 或 DLL 目录 |
+//! | avformat-61.dll | Moho 目录 | PATH 或 DLL 目录 |
+//! | avutil-59.dll | Moho 目录 | PATH 或 DLL 目录 |
+//! | swscale-8.dll | Moho 目录 | PATH 或 DLL 目录 |
+//! | swresample-5.dll | Moho 目录 | PATH 或 DLL 目录 |
+//! | avfilter-10.dll | **scripts/** | PATH 或 DLL 目录 |
+//!
+//! ### 命名差异
+//!
+//! | 平台 | 前缀 | 分隔符 | 后缀 | 示例 |
+//! |------|------|--------|------|------|
+//! | macOS | lib | . | .dylib | libavfilter.10.dylib |
+//! | Windows | 无 | - | .dll | avfilter-10.dll |
+//!
+//! ## 关键点
+//!
+//! 1. **libavfilter 保留在 scripts 目录**
+//!    - macOS: libavfilter.10.dylib
+//!    - Windows: avfilter-10.dll
+//!    - Moho 没有内置 libavfilter
+//!    - GIF 编码需要 libavfilter（调色板优化）
+//!
+//! 2. **check_avfilter_available() 检查 scripts 目录**
+//!    - macOS: scripts/libavfilter.10.dylib
+//!    - Windows: scripts/avfilter-10.dll
+//!
+//! 3. **无需环境变量**
+//!    - macOS: rpath 在编译时设置（见 build.rs）
+//!    - Windows: PATH 或 DLL 目录
+//!
+//! ## 相关文件
+//!
+//! - build.rs: 设置 rpath (macOS)
+//! - build.sh: 执行 install_name_tool (macOS)
+//! - Cargo.toml: ffmpeg-builtin feature
+//!
+//! ## GIF 编码流程
+//!
+//! 1. check_avfilter_available() 检查 libavfilter
+//! 2. encode_gif_with_palette() 使用 libavfilter 调色板优化
+//! 3. 滤镜链: format=rgb24,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse
 
 use crate::ipc_core;
 use crate::ffmpeg_ffi as av;
 use std::ffi::CString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::Ordering;
 use tracing::info;
 
 /// 检查 Moho 内置 FFmpeg 库是否可用
+/// 
+/// ## 平台差异
+/// 
+/// - macOS: /Applications/Moho.app/Contents/Frameworks/
+/// - Windows: C:\Program Files\Moho\
+/// - Linux: /usr/local/lib/ 或 Moho 安装目录
+/// 
+/// ## Windows 说明
+/// 
+/// Windows 版本需要检查两个位置：
+/// 1. Moho 安装目录（内置库）
+/// 2. scripts 目录（avfilter-10.dll 和 avutil-59.dll）
 pub fn check_ffmpeg_available() -> bool {
-    let moho_fw = Path::new("/Applications/Moho.app/Contents/Frameworks");
-    let libs = [
-        "libavcodec.61.dylib",
-        "libavformat.61.dylib",
-        "libavutil.59.dylib",
-        "libswscale.8.dylib",
-        "libswresample.5.dylib",
-    ];
+    #[cfg(target_os = "macos")]
+    {
+        let moho_fw = Path::new("/Applications/Moho.app/Contents/Frameworks");
+        let libs = [
+            "libavcodec.61.dylib",
+            "libavformat.61.dylib",
+            "libavutil.59.dylib",
+            "libswscale.8.dylib",
+            "libswresample.5.dylib",
+        ];
+        libs.iter().all(|lib| moho_fw.join(lib).exists())
+    }
     
-    libs.iter().all(|lib| moho_fw.join(lib).exists())
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: 检查 Moho 安装目录
+        let moho_dir = Path::new("C:\\Program Files\\Moho");
+        let libs = [
+            "avcodec-61.dll",
+            "avformat-61.dll",
+            "avutil-59.dll",
+            "swscale-8.dll",
+            "swresample-5.dll",
+        ];
+        
+        // 如果 Moho 目录存在，检查内置库
+        if moho_dir.exists() {
+            libs.iter().all(|lib| moho_dir.join(lib).exists())
+        } else {
+            // 否则检查 scripts 目录
+            let scripts_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| PathBuf::from("."));
+            libs.iter().all(|lib| scripts_dir.join(lib).exists())
+        }
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // Linux: 检查系统库或 Moho 安装目录
+        let libs = [
+            "libavcodec.so.61",
+            "libavformat.so.61",
+            "libavutil.so.59",
+            "libswscale.so.8",
+            "libswresample.so.5",
+        ];
+        libs.iter().all(|lib| Path::new("/usr/local/lib").join(lib).exists())
+    }
 }
 
 /// 检查 libavfilter 是否可用
+/// 
+/// ## 关键点
+/// 
+/// - libavfilter 在 **scripts 目录**，不是 Moho 内置目录
+/// - Moho 没有内置 libavfilter
+/// - GIF 编码需要 libavfilter（调色板优化）
+/// 
+/// ## 路径
+/// 
+/// - macOS: scripts/libavfilter.10.dylib
+/// - Windows: scripts/avfilter-10.dll
+/// - Linux: scripts/libavfilter.so.10
+/// 
+/// ## 运行时加载
+/// 
+/// - macOS: 通过 rpath 加载（见 build.rs）
+/// - Windows: 通过 PATH 或 DLL 目录加载
+/// 
+/// ## 命名差异
+/// 
+/// | 平台 | 文件名 |
+/// |------|--------|
+/// | macOS | libavfilter.10.dylib |
+/// | Windows | avfilter-10.dll |
+/// | Linux | libavfilter.so.10 |
+/// 
+/// ## Windows 依赖
+/// 
+/// avfilter-10.dll 依赖 avutil-59.dll，需要一起分发。
+/// 
+/// 已通过交叉编译生成（在 macOS 上使用 MinGW-w64）：
+/// - avfilter-10.dll (22 MB)
+/// - avutil-59.dll (3.9 MB)
 pub fn check_avfilter_available() -> bool {
-    Path::new("/Users/def/.openclaw/workspace/skills/moho-mate/scripts/libavfilter.10.dylib").exists()
+    // 获取 scripts 目录路径
+    // 优先使用环境变量，否则使用默认路径
+    let scripts_dir = if let Ok(dir) = std::env::var("MOHO_MATE_SCRIPTS_DIR") {
+        PathBuf::from(dir)
+    } else {
+        // 默认路径：可执行文件所在目录
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        
+        // scripts 目录可能在 exe 同级或上级
+        if exe_dir.join("libavfilter.10.dylib").exists() || exe_dir.join("avfilter-10.dll").exists() {
+            exe_dir
+        } else {
+            // 尝试默认安装路径
+            PathBuf::from("/Users/def/.openclaw/workspace/skills/moho-mate/scripts")
+        }
+    };
+    
+    // 根据平台检查不同的文件名
+    #[cfg(target_os = "macos")]
+    let lib_name = "libavfilter.10.dylib";
+    
+    #[cfg(target_os = "windows")]
+    let lib_name = "avfilter-10.dll";
+    
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let lib_name = "libavfilter.so.10";
+    
+    scripts_dir.join(lib_name).exists()
 }
 
 pub fn encode_gif_with_palette(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
@@ -681,6 +855,26 @@ pub fn encode_apng(input: &str, output: &str, fps: i32) -> anyhow::Result<()> {
 }
 
 /// 使用内置 FFmpeg 编码（自动检测格式）
+/// 
+/// ## 格式支持
+/// 
+/// | 格式 | 状态 | 说明 |
+/// |------|:----:|------|
+/// | MP4 | ✅ | 使用 Moho 内置 FFmpeg |
+/// | APNG | ✅ | 使用 Moho 内置 FFmpeg |
+/// | GIF | ✅ | 需要 libavfilter（scripts 目录）|
+/// 
+/// ## GIF 编码
+/// 
+/// GIF 需要 libavfilter 做调色板优化：
+/// 1. check_avfilter_available() 检查 scripts/libavfilter.10.dylib
+/// 2. encode_gif_with_palette() 使用 libavfilter 滤镜链
+/// 
+/// ## 相关文件
+/// 
+/// - build.rs: 设置 rpath 指向 scripts 目录
+/// - build.sh: 执行 install_name_tool
+/// - ffmpeg_ffi.rs: libavfilter FFI 绑定
 pub fn encode_with_builtin_ffmpeg(input: &str, output: &str, fps: i32, crf: i32) -> anyhow::Result<()> {
     if !check_ffmpeg_available() {
         anyhow::bail!("Moho 内置 FFmpeg 库不可用");
@@ -697,6 +891,13 @@ pub fn encode_with_builtin_ffmpeg(input: &str, output: &str, fps: i32, crf: i32)
     info!("使用内置 FFmpeg 编码: {} -> {} ({})", input, output, output_ext);
     
     let result = if output_ext == "gif" {
+        // GIF 使用 libavfilter（调色板优化）
+        if !check_avfilter_available() {
+            anyhow::bail!(
+                "GIF 编码需要 libavfilter，请确保 scripts/libavfilter.10.dylib 存在\n\
+                或安装系统 ffmpeg：brew install ffmpeg"
+            )
+        }
         encode_gif_with_palette(input, output, fps)
     } else if output_ext == "apng" {
         encode_apng(input, output, fps)

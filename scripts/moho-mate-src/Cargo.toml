@@ -4,6 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 # 库（供测试和外部使用）
+# ⚠️ 关键配置：name 必须是 "moho_mate"（连字符转下划线）
+# 
+# 错误配置会导致 IPC 崩溃：
+#   name = "moho_ipc"        ❌ 错误
+#   crate-type = ["cdylib"]  ❌ 错误（不需要）
+# 
+# 正确配置：
+#   name = "moho_mate"       ✅ 正确
+#   无 crate-type             ✅ 正确（默认生成 rlib，供 bin 引用）
+# 
+# 原理：
+# - bin (moho-mate) 通过 `use moho_mate::luaopen_moho_ipc` 引用 lib 的符号
+# - lib name 必须与 bin 的 use 语句匹配
+# - macOS: moho-mate 可执行文件通过 export_dynamic 导出符号，供 Moho Lua dlopen 加载
+# 
+# 相关文件：
+# - src/main.rs: `use moho_mate::luaopen_moho_ipc`
+# - src/lib.rs: `pub extern "C" fn luaopen_moho_ipc`
+# - build.rs: `println!("cargo:rustc-link-arg=-Wl,-export_dynamic")`
 [lib]
 name = "moho_mate"
 path = "src/lib.rs"
@@ -39,19 +58,101 @@ sha2 = "0.10"
 [build-dependencies]
 which = "6"
 bindgen = "0.72"
+cc = "1.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 不需要 dispatch2，使用自定义 GCD FFI
 
 [features]
-default = []
+default = ["ffmpeg-builtin"]  # 默认使用 Moho 内置 FFmpeg
 ffmpeg-builtin = []  # 使用 Moho 内置 FFmpeg（自定义 FFI）
+                   # 
+                   # ## 库位置
+                   # 
+                   # ### macOS
+                   # 
+                   # Moho 内置（/Applications/Moho.app/Contents/Frameworks/）：
+                   #   - libavcodec.61.dylib ✅
+                   #   - libavformat.61.dylib ✅
+                   #   - libavutil.59.dylib ✅
+                   #   - libswscale.8.dylib ✅
+                   #   - libswresample.5.dylib ✅
+                   # 
+                   # scripts 目录（Moho 没有内置，需单独获取）：
+                   #   - libavfilter.10.dylib ✅（已存在）
+                   # 
+                   # ### Windows
+                   # 
+                   # Moho 内置（C:\Program Files\Moho\）：
+                   #   - avcodec-61.dll ✅
+                   #   - avformat-61.dll ✅
+                   #   - avutil-59.dll ✅
+                   #   - swscale-8.dll ✅
+                   #   - swresample-5.dll ✅
+                   # 
+                   # scripts 目录（Moho 没有内置，需单独获取）：
+                   #   - avfilter-10.dll ✅（已存在）
+                   #   - avutil-59.dll ✅（已存在，avfilter 依赖）
+                   # 
+                   # ### 命名差异
+                   # 
+                   # | 平台 | 前缀 | 分隔符 | 后缀 |
+                   # |------|------|--------|------|
+                   # | macOS | lib | . | .dylib |
+                   # | Windows | 无 | - | .dll |
+                   # 
+                   # 示例：libavfilter.10.dylib (macOS) → avfilter-10.dll (Windows)
+                   # 
+                   # ### Windows avfilter-10.dll 获取方式
+                   # 
+                   # 已通过交叉编译生成（在 macOS 上使用 MinGW-w64）：
+                   # 
+                   # ```bash
+                   # # 配置 FFmpeg n7.1
+                   # ./configure \
+                   #   --arch=x86_64 \
+                   #   --target-os=mingw64 \
+                   #   --cross-prefix=x86_64-w64-mingw32- \
+                   #   --enable-shared \
+                   #   --disable-static \
+                   #   --disable-programs \
+                   #   --disable-x86asm \
+                   #   --enable-avfilter
+                   # 
+                   # # 编译
+                   # make -j8
+                   # ```
+                   # 
+                   # 输出文件：
+                   #   - libavfilter/avfilter-10.dll (22 MB)
+                   #   - libavutil/avutil-59.dll (3.9 MB)
+                   # 
+                   # ### avutil-59.dll 说明
+                   # 
+                   # avfilter-10.dll 依赖 avutil-59.dll，需要一起分发。
+                   # 
+                   # 如果 Moho Windows 版已内置 avutil-59.dll，可以只分发 avfilter-10.dll。
+                   # 
+                   # ## 运行时加载
+                   # 
+                   # - 无需设置环境变量
+                   # - macOS: rpath 在 build.rs 中设置
+                   # - Windows: PATH 或 DLL 目录
+                   # - macOS: install_name_tool 在 build.sh 中执行
+                   # 
+                   # ## 相关文件
+                   # 
+                   # - build.rs: 设置 rpath (macOS)
+                   # - build.sh: 执行 install_name_tool (macOS)
+                   # - encode_native.rs: FFmpeg 编码实现
+                   # - ffmpeg_ffi.rs: FFmpeg FFI 绑定
 http-client = []    # HTTP 客户端支持（registry 操作）
 
 [profile.release]
 opt-level = 3
 lto = true
 panic = "unwind"
+strip = "debuginfo"
 
 # macOS: 导出动态符号（让 Lua 可以 dlopen 加载）
 # rustflags = ["-C", "link-arg=-Wl,-export_dynamic"]
