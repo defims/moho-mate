@@ -12,157 +12,41 @@
 //!
 //! ## macOS 库加载方案
 //!
-//! ### 最终方案：Frameworks 符号链接
+//! ### 最终方案：scripts 目录库符号链接
 //!
 //! ```text
-//! skills/moho-mate/
-//! ├── Frameworks -> /Applications/Moho.app/Contents/Frameworks/
-//! └── scripts/
-//!     ├── moho-mate
-//!     └── libavfilter.10.dylib
+//! skills/moho-mate/scripts/
+//! ├── moho-mate
+//! ├── libavfilter.10.dylib
+//! ├── libavcodec.61.dylib -> /Applications/Moho.app/.../libavcodec.61.dylib
+//! ├── libavformat.61.dylib -> /Applications/Moho.app/.../libavformat.61.dylib
+//! ├── libavutil.59.dylib -> ...
+//! ├── libswscale.8.dylib -> ...
+//! └── libswresample.5.dylib -> ...
 //! ```
 //!
-//! ### 路径解析
+//! ### 关键点
 //!
-//! Moho 内置 FFmpeg 的 install name：
-//! ```text
-//! @executable_path/../Frameworks/libavcodec.61.dylib
-//! ```
+//! 1. **修改库引用路径**
+//!    - install_name_tool 将 `@executable_path/../Frameworks/` 改为 `@executable_path/`
+//!    - moho-mate 在 scripts/ 目录查找所有库
 //!
-//! 当 moho-mate 运行时（在 scripts/ 目录）：
-//! ```text
-//! @executable_path = scripts/
-//! @executable_path/../Frameworks = skills/moho-mate/Frameworks/
-//!                                     ↓ 符号链接
-//!                            /Applications/Moho.app/Contents/Frameworks/
-//! ```
+//! 2. **库之间依赖自动解决**
+//!    - `@loader_path` 解析为真实文件所在目录（Moho Frameworks）
+//!    - 不需要修改库本身的依赖路径
 //!
-//! ### libavfilter 特殊处理
+//! 3. **方案对比**
 //!
-//! - libavfilter.10.dylib 放在 **scripts 目录**（Moho 没有内置）
-//! - 使用 @rpath 路径，rpath 在 build.rs 中设置
+//!    | 项目 | Frameworks 符号链接 | scripts 库符号链接 |
+//!    |------|-------------------|-------------------|
+//!    | 符号链接位置 | 项目根目录 | ✅ scripts 目录 |
+//!    | 库集中 | 分散 | ✅ 集中 |
 //!
-//! ### 为什么不需要 install_name_tool？
+//! ### 相关文件
 //!
-//! | 方案 | 符号链接数量 | install_name_tool | 用户干预 |
-//! |------|-------------|-------------------|--------|
-//! | ~~旧方案~~ | 0 | 需要（每次编译） | 无 |
-//! | **新方案** | 1（Frameworks） | 不需要 | 一次 |
-//!
-//! 新方案更优：
-//! - 符号链接永久有效
-//! - 无需修改二进制文件
-//! - 编译后直接可用
-//!
-//! ### 为什么不在 scripts/ 目录创建库符号链接？
-//!
-//! 因为库之间也有依赖：
-//! ```text
-//! libavformat.61.dylib
-//!   └── @loader_path/../Frameworks/libavcodec.61.dylib
-//! ```
-//!
-//! `@loader_path` = 当前库所在目录。如果在 scripts/ 创建符号链接：
-//! ```text
-//! @loader_path/../Frameworks = scripts/../Frameworks = skills/moho-mate/Frameworks
-//! ```
-//!
-//! 最终还是需要 Frameworks 符号链接，所以在 scripts/ 目录创建库符号链接无效。
-//!
-//! ## Windows DLL 说明
-//!
-//! ### 为什么需要额外 DLL？
-//!
-//! 1. **Moho 没有内置 libavfilter**
-//!    - Moho 内置: avcodec, avformat, avutil, swscale, swresample
-//!    - 缺少: avfilter
-//!
-//! 2. **GIF 编码需要 libavfilter**
-//!    - palettegen: 生成调色板
-//!    - paletteuse: 应用调色板
-//!    - 高质量 GIF 输出
-//!
-//! 3. **avfilter 依赖 avutil**
-//!    - avfilter-10.dll 需要加载 avutil-59.dll
-//!    - 两个文件必须一起分发
-//!
-//! ### 文件列表
-//!
-//! | 文件 | 大小 | 说明 |
-//! |------|------|------|
-//! | avfilter-10.dll | 22 MB | FFmpeg 滤镜库（GIF 调色板优化） |
-//! | avutil-59.dll | 3.9 MB | FFmpeg 工具库（avfilter 依赖） |
-//!
-//! ### 获取方式
-//!
-//! **方法 1: 使用已编译的文件（推荐）**
-//!
-//! scripts 目录已包含预编译的 DLL 文件。
-//!
-//! **方法 2: 从 FFmpeg 官方下载**
-//!
-//! 1. 访问: https://www.gyan.dev/ffmpeg/builds/
-//! 2. 下载: ffmpeg-release-shared.7z
-//! 3. 解压后找到 bin/avfilter-10.dll 和 bin/avutil-59.dll
-//! 4. 复制到 scripts 目录
-//!
-//! **方法 3: 交叉编译（在 macOS/Linux 上）**
-//!
-//! ```bash
-//! # 安装 MinGW-w64
-//! # macOS: brew install mingw-w64
-//! # Linux: sudo apt install mingw-w64
-//!
-//! # 下载 FFmpeg n7.1 源码
-//! git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git
-//! cd FFmpeg
-//!
-//! # 配置（Windows x86_64）
-//! ./configure \
-//!   --arch=x86_64 \
-//!   --target-os=mingw64 \
-//!   --cross-prefix=x86_64-w64-mingw32- \
-//!   --enable-shared \
-//!   --disable-static \
-//!   --disable-programs \
-//!   --disable-doc \
-//!   --disable-x86asm \
-//!   --enable-avfilter
-//!
-//! # 编译
-//! make -j8
-//!
-//! # 输出: libavfilter/avfilter-10.dll, libavutil/avutil-59.dll
-//! ```
-//!
-//! ## 常见问题排查
-//!
-//! ### 问题 1: dyld: Library not loaded
-//!
-//! ```
-//! dyld: Library not loaded: @executable_path/../Frameworks/libavcodec.61.dylib
-//! ```
-//!
-//! **原因**: Frameworks 符号链接不存在
-//!
-//! **解决**: 运行 build.sh 或手动创建符号链接
-//! ```bash
-//! cd skills/moho-mate
-//! ln -s /Applications/Moho.app/Contents/Frameworks Frameworks
-//! ```
-//!
-//! ### 问题 2: 找不到 avfilter-10.dll
-//!
-//! **原因**: Windows 缺少 DLL 文件
-//!
-//! **解决**: 从 scripts 目录复制 avfilter-10.dll 和 avutil-59.dll
-//!
-//! ## 相关文件
-//!
-//! - build.rs: 设置 rpath (macOS)
-//! - build.sh: 创建 Frameworks 符号链接
+//! - build.rs: 设置 rpath
+//! - build.sh: 创建库符号链接 + 修改库引用路径
 //! - ffmpeg_ffi.rs: FFmpeg FFI 绑定
-
 use crate::ipc_core;
 use crate::ffmpeg_ffi as av;
 use std::ffi::CString;

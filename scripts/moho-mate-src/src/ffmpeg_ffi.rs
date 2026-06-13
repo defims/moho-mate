@@ -11,53 +11,67 @@
 //!  GIF 编码   容器格式   编解码     图像缩放    音频重采样   工具函数
 //! ```
 //!
-//! ## 平台差异
-//!
-//! | 平台 | 库位置 | 链接方式 |
-//! |------|--------|----------|
-//! | macOS | Moho Frameworks + scripts | dylib + rpath |
-//! | Windows | Moho 目录 + scripts | DLL + PATH |
-//! | Linux | 系统库 | so + LD_LIBRARY_PATH |
-//!
 //! ## macOS 库加载方案
 //!
-//! ### 最终方案：Frameworks 符号链接
+//! ### 最终方案：scripts 目录库符号链接
 //!
 //! ```text
-//! skills/moho-mate/
-//! ├── Frameworks -> /Applications/Moho.app/Contents/Frameworks/
-//! └── scripts/
-//!     ├── moho-mate
-//!     └── libavfilter.10.dylib
+//! skills/moho-mate/scripts/
+//! ├── moho-mate
+//! ├── libavfilter.10.dylib
+//! ├── libavcodec.61.dylib -> /Applications/Moho.app/.../libavcodec.61.dylib
+//! ├── libavformat.61.dylib -> /Applications/Moho.app/.../libavformat.61.dylib
+//! ├── libavutil.59.dylib -> ...
+//! ├── libswscale.8.dylib -> ...
+//! └── libswresample.5.dylib -> ...
 //! ```
 //!
-//! ### 为什么有效？
+//! ### 为什么可行？
 //!
-//! Moho 内置 FFmpeg 的 install name：
-//! ```text
-//! @executable_path/../Frameworks/libavcodec.61.dylib
-//! ```
+//! 1. **修改 moho-mate 的库引用路径**
 //!
-//! 当 moho-mate 在 scripts/ 目录运行时：
-//! ```text
-//! @executable_path = scripts/
-//! @executable_path/../Frameworks = skills/moho-mate/Frameworks/
-//!                                     ↓ 符号链接
-//!                            /Applications/Moho.app/Contents/Frameworks/
-//! ```
+//!    使用 install_name_tool 将库引用路径从 `@executable_path/../Frameworks/`
+//!    改为 `@executable_path/`。
 //!
-//! ### 为什么不需要 install_name_tool？
+//!    当 moho-mate 运行时（在 scripts/ 目录）：
+//!    ```text
+//!    @executable_path = scripts/
+//!    @executable_path/libavcodec.61.dylib = scripts/libavcodec.61.dylib ✅
+//!    ```
 //!
-//! | 方案 | 操作 | 优点 | 缺点 |
-//! |------|------|------|------|
-//! | ~~install_name_tool~~ | 修改二进制 | 自动化 | 每次编译后执行 |
-//! | **符号链接** | ln -s（一次） | 零修改、永久有效 | 需要初始设置 |
+//! 2. **库之间的依赖自动解决**
 //!
-//! 符号链接方案更优：
-//! - 只需创建一次
-//! - 无需修改二进制文件
-//! - 编译后直接可用
-//! - 用户零干预
+//!    libavformat 依赖：`@loader_path/../Frameworks/libavcodec.61.dylib`
+//!
+//!    **关键**：`@loader_path` 解析为**真实文件所在目录**，不是符号链接所在目录！
+//!
+//!    当 libavformat.61.dylib 符号链接指向 Moho Frameworks：
+//!    ```text
+//!    @loader_path = /Applications/Moho.app/Contents/Frameworks/
+//!    @loader_path/../Frameworks = /Applications/Moho.app/.../Frameworks/ ✅
+//!    ```
+//!
+//! ### 为什么不用项目根目录的 Frameworks 符号链接？
+//!
+//! | 项目 | 方案 A（Frameworks 符号链接） | 方案 B（scripts 库符号链接） |
+//! |------|------------------------------|----------------------------|
+//! | 符号链接位置 | 项目根目录 | scripts 目录 |
+//! | 符号链接数量 | 1 个 | 5 个 |
+//! | install_name_tool | 不需要 | 需要 |
+//! | 库集中 | 分散（Frameworks/ + scripts/） | ✅ scripts 目录 |
+//!
+//! 方案 B 更优：所有文件集中在 scripts 目录，结构更清晰。
+//!
+//! ## Windows DLL 说明
+//!
+//! 将 avfilter-10.dll 和 avutil-59.dll 放在 moho-mate.exe 同目录即可。
+//!
+//! ## 相关文件
+//!
+//! - build.rs: 设置 rpath
+//! - build.sh: 创建库符号链接 + 修改库引用路径
+//! - Cargo.toml: ffmpeg-builtin feature 说明
+//! - encode_native.rs: FFmpeg 编码实现
 //!
 //! ### 为什么不能在 scripts/ 目录创建库符号链接？
 //!
