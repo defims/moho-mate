@@ -6,28 +6,33 @@
 #   ./build.sh --test   # 构建并测试
 #
 # 关键步骤:
-#   1. cargo build --release
-#   2. install_name_tool 修改库路径 (macOS only)
+#   1. 检查 Frameworks 符号链接
+#   2. cargo build --release
 #   3. 复制到 scripts 目录
 #
-# 平台差异:
-#   - macOS: 需要 install_name_tool 修改库路径
-#   - Windows: 无需修改，依赖 PATH 或 DLL 目录
-#   - Linux: 无需修改，依赖 LD_LIBRARY_PATH
+# ⚠️ 重要：Frameworks 符号链接
 #
-# 为什么需要 install_name_tool (macOS)?
-#   - Moho 内置的 FFmpeg 库使用 @executable_path/../Frameworks/ 路径
-#   - moho-mate 不在 Moho.app 目录，运行时找不到库
-#   - install_name_tool 将路径改为绝对路径，解决运行时加载问题
+#   moho-mate 使用 Moho 内置 FFmpeg 库，这些库的 install name 是：
+#     @executable_path/../Frameworks/libavcodec.61.dylib
 #
-# 库路径说明:
+#   为了让 moho-mate 能找到这些库，需要在项目根目录创建 Frameworks 符号链接：
+#     skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks
+#
+#   这样从 moho-mate 的视角：
+#     @executable_path = scripts/
+#     @executable_path/../Frameworks = Frameworks/ -> Moho Frameworks
+#
+#   好处：
+#     - 无需 install_name_tool（零二进制修改）
+#     - 无需复制库（省 40MB 空间）
+#     - 编译后直接可用
+#     - 符号链接永久有效（只需创建一次）
+#
+# 库位置说明:
 #   - macOS:
-#       Moho 内置库（libavcodec, libavformat 等）:
-#         原路径: @executable_path/../Frameworks/libavcodec.61.dylib
-#         新路径: /Applications/Moho.app/Contents/Frameworks/libavcodec.61.dylib
-#       libavfilter:
-#         路径: @rpath/libavfilter.10.dylib
-#         rpath: scripts 目录（在 build.rs 中设置）
+#       符号链接: skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks/
+#       内置库: libavcodec.61.dylib, libavformat.61.dylib, avutil.59.dylib 等
+#       scripts 目录: libavfilter.10.dylib（Moho 没有内置）
 #   - Windows:
 #       所有库: avcodec-61.dll, avformat-61.dll 等
 #       位置: Moho 安装目录 或 scripts 目录
@@ -62,21 +67,51 @@
 set -e
 cd "$(dirname "$0")/moho-mate-src"
 
+# ============================================================
+# macOS: 检查并创建 Frameworks 符号链接
+# ============================================================
+# 
+# 这是替代 install_name_tool 的更优雅方案。
+# 符号链接让 @executable_path/../Frameworks 自动指向 Moho Frameworks。
+#
+if [ "$(uname)" = "Darwin" ]; then
+    PROJECT_ROOT="$(cd .. && pwd)"
+    FRAMEWORKS_LINK="$PROJECT_ROOT/Frameworks"
+    MOHO_FRAMEWORKS="/Applications/Moho.app/Contents/Frameworks"
+    
+    # 检查 Moho 是否安装
+    if [ ! -d "$MOHO_FRAMEWORKS" ]; then
+        echo "⚠️ Moho Frameworks 目录不存在: $MOHO_FRAMEWORKS"
+        echo "   请确保 Moho 已安装"
+        exit 1
+    fi
+    
+    # 检查符号链接是否存在
+    if [ ! -L "$FRAMEWORKS_LINK" ]; then
+        echo "=== 创建 Frameworks 符号链接 ==="
+        ln -s "$MOHO_FRAMEWORKS" "$FRAMEWORKS_LINK"
+        echo "✓ 符号链接已创建: $FRAMEWORKS_LINK -> $MOHO_FRAMEWORKS"
+    else
+        # 验证符号链接目标是否正确
+        LINK_TARGET="$(readlink "$FRAMEWORKS_LINK")"
+        if [ "$LINK_TARGET" != "$MOHO_FRAMEWORKS" ]; then
+            echo "⚠️ 符号链接目标不正确: $LINK_TARGET"
+            echo "   重新创建正确的符号链接"
+            rm "$FRAMEWORKS_LINK"
+            ln -s "$MOHO_FRAMEWORKS" "$FRAMEWORKS_LINK"
+            echo "✓ 符号链接已更新: $FRAMEWORKS_LINK -> $MOHO_FRAMEWORKS"
+        else
+            echo "✓ Frameworks 符号链接已存在"
+        fi
+    fi
+fi
+
+echo ""
 echo "=== 构建 moho-mate ==="
 cargo build --release
 
-echo ""
-echo "=== 修改 FFmpeg 库路径 ==="
-MOHO_MATE="target/release/moho-mate"
-
-# 修改 Moho 内置库的路径为绝对路径
-install_name_tool -change "@executable_path/../Frameworks/libavcodec.61.dylib" "/Applications/Moho.app/Contents/Frameworks/libavcodec.61.dylib" "$MOHO_MATE" 2>/dev/null || true
-install_name_tool -change "@executable_path/../Frameworks/libavformat.61.dylib" "/Applications/Moho.app/Contents/Frameworks/libavformat.61.dylib" "$MOHO_MATE" 2>/dev/null || true
-install_name_tool -change "@executable_path/../Frameworks/libavutil.59.dylib" "/Applications/Moho.app/Contents/Frameworks/libavutil.59.dylib" "$MOHO_MATE" 2>/dev/null || true
-install_name_tool -change "@executable_path/../Frameworks/libswscale.8.dylib" "/Applications/Moho.app/Contents/Frameworks/libswscale.8.dylib" "$MOHO_MATE" 2>/dev/null || true
-install_name_tool -change "@executable_path/../Frameworks/libswresample.5.dylib" "/Applications/Moho.app/Contents/Frameworks/libswresample.5.dylib" "$MOHO_MATE" 2>/dev/null || true
-
-echo "✓ FFmpeg 库路径已修改"
+# 注意：不再需要 install_name_tool！
+# 符号链接已经让 @executable_path/../Frameworks 指向 Moho Frameworks
 
 echo ""
 echo "=== 更新 moho-mate ==="
