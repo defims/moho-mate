@@ -2,6 +2,103 @@
 //!
 //! 基于 FFmpeg 7.x API，从 rusty_ffmpeg 生成的绑定中提取
 //! 只保留 encode_native.rs 实际使用的部分
+//!
+//! ## 库依赖关系
+//!
+//! ```text
+//! avfilter -> avformat -> avcodec -> swscale -> swresample -> avutil
+//!     ↓          ↓          ↓          ↓           ↓          ↓
+//!  GIF 编码   容器格式   编解码     图像缩放    音频重采样   工具函数
+//! ```
+//!
+//! ## 平台差异
+//!
+//! | 平台 | 库位置 | 链接方式 |
+//! |------|--------|----------|
+//! | macOS | Moho Frameworks + scripts | dylib + rpath |
+//! | Windows | Moho 目录 + scripts | DLL + PATH |
+//! | Linux | 系统库 | so + LD_LIBRARY_PATH |
+//!
+//! ## macOS 库路径详解
+//!
+//! ### 问题
+//!
+//! Moho 内置 FFmpeg 使用 `@executable_path/../Frameworks/` 路径：
+//! - 这对 Moho.app 内的程序有效
+//! - 对 moho-mate（在 scripts 目录）无效
+//!
+//! ### 解决方案
+//!
+//! 1. **编译时** (build.rs):
+//!    - 设置 rpath 指向 scripts 目录
+//!    - 链接 Moho Frameworks 目录
+//!
+//! 2. **编译后** (build.sh):
+//!    - 使用 install_name_tool 修改库路径为绝对路径
+//!
+//! ### libavfilter 特殊处理
+//!
+//! - libavfilter.10.dylib 放在 **scripts 目录**
+//! - Moho 没有内置 libavfilter
+//! - 使用 @rpath 路径，rpath 在 build.rs 中设置
+//!
+//! ## Windows DLL 说明
+//!
+//! ### 文件列表
+//!
+//! | 文件 | 大小 | 说明 |
+//! |------|------|------|
+//! | avfilter-10.dll | 22 MB | FFmpeg 滤镜库 |
+//! | avutil-59.dll | 3.9 MB | FFmpeg 工具库（avfilter 依赖） |
+//!
+//! ### 运行时加载
+//!
+//! Windows DLL 加载顺序:
+//! 1. 应用程序目录
+//! 2. 系统目录 (C:\Windows\System32)
+//! 3. PATH 环境变量中的目录
+//!
+//! 将 DLL 放在 moho-mate.exe 同目录即可。
+//!
+//! ## 常见问题排查
+//!
+//! ### 问题 1: dyld: Library not loaded
+//!
+//! ```
+//! dyld: Library not loaded: @executable_path/../Frameworks/libavcodec.61.dylib
+//! ```
+//!
+//! **原因**: install_name_tool 没有执行
+//!
+//! **解决**: 运行 build.sh 或手动执行 install_name_tool
+//!
+//! ### 问题 2: Cannot open shared object file
+//!
+//! ```
+//! error while loading shared libraries: libavfilter.so.10
+//! ```
+//!
+//! **原因**: Linux 系统缺少 FFmpeg 开发库
+//!
+//! **解决**:
+//! ```bash
+//! sudo apt install libavfilter-dev libavformat-dev libavcodec-dev libswscale-dev
+//! ```
+//!
+//! ### 问题 3: 找不到 avfilter-10.dll
+//!
+//! **原因**: Windows 缺少 DLL 文件
+//!
+//! **解决**:
+//! 1. 从 scripts 目录复制 avfilter-10.dll 和 avutil-59.dll
+//! 2. 或从 FFmpeg 官方下载
+//!
+//! ## 相关文件
+//!
+//! - build.rs: 设置 rpath (macOS)
+//! - build.sh: 执行 install_name_tool (macOS)
+//! - Cargo.toml: ffmpeg-builtin feature 说明
+//! - encode_native.rs: FFmpeg 编码实现
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]

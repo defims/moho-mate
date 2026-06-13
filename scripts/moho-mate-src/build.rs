@@ -11,7 +11,26 @@ fn main() {
     // 检查是否启用 ffmpeg-builtin feature
     let ffmpeg_builtin = std::env::var("CARGO_FEATURE_FFMPEG_BUILTIN").is_ok();
     
-    // Lua 库配置（根据目标平台和架构选择）
+    // ============================================================
+    // Lua 库配置
+    // ============================================================
+    // 
+    // 根据目标平台和架构选择正确的 Lua 库目录
+    // 
+    // 目录结构：
+    //   lua-src/
+    //   ├── src/           # Lua 源码
+    //   ├── lib-x64/       # macOS x86_64 / Linux x86_64
+    //   ├── lib-arm64/     # macOS Apple Silicon
+    //   ├── lib-msvc/      # Windows MSVC
+    //   └── lib-mingw/     # Windows MinGW
+    //
+    // 注意：MSVC 的库文件名是 lua.lib，其他平台是 liblua.a
+    //
+    // 相关文件：
+    //   - src/main.rs: 使用 `use moho_mate::*` 引用库
+    //   - src/lib.rs: 定义 Lua FFI 函数
+    //
     let lua_dir = manifest_dir.clone() + "/lua-src";
     let is_msvc = target_os == "windows" && target_env == "msvc";
     
