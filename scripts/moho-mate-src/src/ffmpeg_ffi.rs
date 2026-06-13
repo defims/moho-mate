@@ -19,28 +19,59 @@
 //! | Windows | Moho 目录 + scripts | DLL + PATH |
 //! | Linux | 系统库 | so + LD_LIBRARY_PATH |
 //!
-//! ## macOS 库路径详解
+//! ## macOS 库加载方案
 //!
-//! ### 问题
+//! ### 最终方案：Frameworks 符号链接
 //!
-//! Moho 内置 FFmpeg 使用 `@executable_path/../Frameworks/` 路径：
-//! - 这对 Moho.app 内的程序有效
-//! - 对 moho-mate（在 scripts 目录）无效
+//! ```text
+//! skills/moho-mate/
+//! ├── Frameworks -> /Applications/Moho.app/Contents/Frameworks/
+//! └── scripts/
+//!     ├── moho-mate
+//!     └── libavfilter.10.dylib
+//! ```
 //!
-//! ### 解决方案
+//! ### 为什么有效？
 //!
-//! 1. **编译时** (build.rs):
-//!    - 设置 rpath 指向 scripts 目录
-//!    - 链接 Moho Frameworks 目录
+//! Moho 内置 FFmpeg 的 install name：
+//! ```text
+//! @executable_path/../Frameworks/libavcodec.61.dylib
+//! ```
 //!
-//! 2. **编译后** (build.sh):
-//!    - 使用 install_name_tool 修改库路径为绝对路径
+//! 当 moho-mate 在 scripts/ 目录运行时：
+//! ```text
+//! @executable_path = scripts/
+//! @executable_path/../Frameworks = skills/moho-mate/Frameworks/
+//!                                     ↓ 符号链接
+//!                            /Applications/Moho.app/Contents/Frameworks/
+//! ```
 //!
-//! ### libavfilter 特殊处理
+//! ### 为什么不需要 install_name_tool？
 //!
-//! - libavfilter.10.dylib 放在 **scripts 目录**
-//! - Moho 没有内置 libavfilter
-//! - 使用 @rpath 路径，rpath 在 build.rs 中设置
+//! | 方案 | 操作 | 优点 | 缺点 |
+//! |------|------|------|------|
+//! | ~~install_name_tool~~ | 修改二进制 | 自动化 | 每次编译后执行 |
+//! | **符号链接** | ln -s（一次） | 零修改、永久有效 | 需要初始设置 |
+//!
+//! 符号链接方案更优：
+//! - 只需创建一次
+//! - 无需修改二进制文件
+//! - 编译后直接可用
+//! - 用户零干预
+//!
+//! ### 为什么不能在 scripts/ 目录创建库符号链接？
+//!
+//! 因为库之间也有依赖：
+//! ```text
+//! libavformat.61.dylib
+//!   └── @loader_path/../Frameworks/libavcodec.61.dylib
+//! ```
+//!
+//! `@loader_path` = 当前库所在目录。如果在 scripts/ 创建符号链接：
+//! ```text
+//! @loader_path/../Frameworks = scripts/../Frameworks = skills/moho-mate/Frameworks
+//! ```
+//! 最终还是需要 Frameworks 符号链接，所以在 scripts/ 目录创建库符号链接无效。
 //!
 //! ## Windows DLL 说明
 //!
@@ -68,9 +99,13 @@
 //! dyld: Library not loaded: @executable_path/../Frameworks/libavcodec.61.dylib
 //! ```
 //!
-//! **原因**: install_name_tool 没有执行
+//! **原因**: Frameworks 符号链接不存在
 //!
-//! **解决**: 运行 build.sh 或手动执行 install_name_tool
+//! **解决**: 运行 build.sh 或手动创建符号链接
+//! ```bash
+//! cd skills/moho-mate
+//! ln -s /Applications/Moho.app/Contents/Frameworks Frameworks
+//! ```
 //!
 //! ### 问题 2: Cannot open shared object file
 //!
@@ -96,7 +131,7 @@
 //! ## 相关文件
 //!
 //! - build.rs: 设置 rpath (macOS)
-//! - build.sh: 执行 install_name_tool (macOS)
+//! - build.sh: 创建 Frameworks 符号链接
 //! - Cargo.toml: ffmpeg-builtin feature 说明
 //! - encode_native.rs: FFmpeg 编码实现
 

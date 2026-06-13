@@ -168,35 +168,43 @@ fn compile_lua_with_cc(target_os: &str, target_arch: &str, lua_src_dir: &str, lu
 
 /// 链接 Moho 内置的 FFmpeg 库
 /// 
-/// ## 库位置
+/// ## 最终方案：Frameworks 符号链接
 /// 
-/// - Moho 内置：`/Applications/Moho.app/Contents/Frameworks/`
-/// - libavfilter：`scripts/libavfilter.10.dylib`（Moho 没有内置）
+/// 不再需要 install_name_tool！
 /// 
-/// ## 库路径问题
+/// ### 方案
 /// 
-/// Moho 内置的 FFmpeg 使用 `@executable_path/../Frameworks/` 路径
-/// 这对 moho-mate 不适用（不在 Moho.app 目录）
+/// 在项目根目录创建 Frameworks 符号链接：
+/// ```text
+/// skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks
+/// ```
 /// 
-/// ## 解决方案
+/// ### 为什么有效？
 /// 
-/// 1. 编译时设置 rpath 指向 scripts 目录
-/// 2. 编译后使用 `install_name_tool` 修改库路径为绝对路径（见 build.sh）
+/// Moho 内置 FFmpeg 的 install name：
+/// ```text
+/// @executable_path/../Frameworks/libavcodec.61.dylib
+/// ```
 /// 
-/// ## 关键点
+/// 当 moho-mate 运行时（在 scripts/ 目录）：
+/// ```text
+/// @executable_path = scripts/
+/// @executable_path/../Frameworks = skills/moho-mate/Frameworks/
+///                                     ↓ 符号链接
+///                            /Applications/Moho.app/Contents/Frameworks/
+/// ```
 /// 
-/// - libavfilter.10.dylib 保留在 scripts 目录，不复制到 Moho Frameworks
-/// - rpath 让运行时能找到 scripts 目录的 libavfilter
-/// - install_name_tool 让运行时能找到 Moho Frameworks 的其他库
+/// ### libavfilter 特殊处理
 /// 
-/// ## 相关文件
+/// - libavfilter.10.dylib 放在 **scripts 目录**（Moho 没有内置）
+/// - 使用 @rpath 路径
+/// - rpath 在 build.rs 中设置为 scripts 目录
 /// 
-/// - build.sh: 执行 install_name_tool 修改库路径
-/// - encode_native.rs: check_avfilter_available() 检查 scripts 目录
+/// ### 相关文件
 /// 
-/// ## 运行时加载
-/// 
-/// 无需设置环境变量，所有路径在编译时已正确配置。
+/// - build.sh: 创建 Frameworks 符号链接
+/// - encode_native.rs: FFmpeg 编码实现
+/// - ffmpeg_ffi.rs: FFmpeg FFI 绑定
 fn link_moho_ffmpeg() {
     let moho_frameworks = "/Applications/Moho.app/Contents/Frameworks";
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();

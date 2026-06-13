@@ -10,49 +10,64 @@
 //! | APNG | 动画 PNG | avcodec, avformat, avutil |
 //! | GIF | 调色板优化 | avfilter, avutil |
 //!
-//! ## 库配置
+//! ## macOS 库加载方案
 //!
-//! ### macOS
+//! ### 最终方案：Frameworks 符号链接
 //!
-//! | 库 | 位置 | 路径类型 |
-//! |----|------|----------|
-//! | libavcodec.61.dylib | Moho Frameworks | 绝对路径（install_name_tool） |
-//! | libavformat.61.dylib | Moho Frameworks | 绝对路径 |
-//! | libavutil.59.dylib | Moho Frameworks | 绝对路径 |
-//! | libswscale.8.dylib | Moho Frameworks | 绝对路径 |
-//! | libswresample.5.dylib | Moho Frameworks | 绝对路径 |
-//! | libavfilter.10.dylib | **scripts/** | `@rpath/`（通过 rpath） |
+//! ```text
+//! skills/moho-mate/
+//! ├── Frameworks -> /Applications/Moho.app/Contents/Frameworks/
+//! └── scripts/
+//!     ├── moho-mate
+//!     └── libavfilter.10.dylib
+//! ```
 //!
-//! ### Windows
+//! ### 路径解析
 //!
-//! | 库 | 位置 | 路径类型 |
-//! |----|------|----------|
-//! | avcodec-61.dll | Moho 目录 | PATH 或 DLL 目录 |
-//! | avformat-61.dll | Moho 目录 | PATH 或 DLL 目录 |
-//! | avutil-59.dll | Moho 目录 | PATH 或 DLL 目录 |
-//! | swscale-8.dll | Moho 目录 | PATH 或 DLL 目录 |
-//! | swresample-5.dll | Moho 目录 | PATH 或 DLL 目录 |
-//! | avfilter-10.dll | **scripts/** | PATH 或 DLL 目录 |
-//! | avutil-59.dll | **scripts/** | PATH 或 DLL 目录（avfilter 依赖） |
+//! Moho 内置 FFmpeg 的 install name：
+//! ```text
+//! @executable_path/../Frameworks/libavcodec.61.dylib
+//! ```
 //!
-//! ### Linux
+//! 当 moho-mate 运行时（在 scripts/ 目录）：
+//! ```text
+//! @executable_path = scripts/
+//! @executable_path/../Frameworks = skills/moho-mate/Frameworks/
+//!                                     ↓ 符号链接
+//!                            /Applications/Moho.app/Contents/Frameworks/
+//! ```
 //!
-//! | 库 | 位置 | 路径类型 |
-//! |----|------|----------|
-//! | libavcodec.so.61 | 系统库 | LD_LIBRARY_PATH |
-//! | libavformat.so.61 | 系统库 | LD_LIBRARY_PATH |
-//! | libavutil.so.59 | 系统库 | LD_LIBRARY_PATH |
-//! | libswscale.so.8 | 系统库 | LD_LIBRARY_PATH |
-//! | libswresample.so.5 | 系统库 | LD_LIBRARY_PATH |
-//! | libavfilter.so.10 | 系统库 | LD_LIBRARY_PATH |
+//! ### libavfilter 特殊处理
 //!
-//! ## 命名差异
+//! - libavfilter.10.dylib 放在 **scripts 目录**（Moho 没有内置）
+//! - 使用 @rpath 路径，rpath 在 build.rs 中设置
 //!
-//! | 平台 | 前缀 | 分隔符 | 后缀 | 示例 |
-//! |------|------|--------|------|------|
-//! | macOS | lib | . | .dylib | libavfilter.10.dylib |
-//! | Windows | 无 | - | .dll | avfilter-10.dll |
-//! | Linux | lib | . | .so.X | libavfilter.so.10 |
+//! ### 为什么不需要 install_name_tool？
+//!
+//! | 方案 | 符号链接数量 | install_name_tool | 用户干预 |
+//! |------|-------------|-------------------|--------|
+//! | ~~旧方案~~ | 0 | 需要（每次编译） | 无 |
+//! | **新方案** | 1（Frameworks） | 不需要 | 一次 |
+//!
+//! 新方案更优：
+//! - 符号链接永久有效
+//! - 无需修改二进制文件
+//! - 编译后直接可用
+//!
+//! ### 为什么不在 scripts/ 目录创建库符号链接？
+//!
+//! 因为库之间也有依赖：
+//! ```text
+//! libavformat.61.dylib
+//!   └── @loader_path/../Frameworks/libavcodec.61.dylib
+//! ```
+//!
+//! `@loader_path` = 当前库所在目录。如果在 scripts/ 创建符号链接：
+//! ```text
+//! @loader_path/../Frameworks = scripts/../Frameworks = skills/moho-mate/Frameworks
+//! ```
+//!
+//! 最终还是需要 Frameworks 符号链接，所以在 scripts/ 目录创建库符号链接无效。
 //!
 //! ## Windows DLL 说明
 //!
@@ -120,56 +135,33 @@
 //! # 输出: libavfilter/avfilter-10.dll, libavutil/avutil-59.dll
 //! ```
 //!
-//! ### 运行时加载
+//! ## 常见问题排查
 //!
-//! Windows DLL 加载顺序:
-//! 1. 应用程序目录
-//! 2. 系统目录 (C:\Windows\System32)
-//! 3. PATH 环境变量中的目录
+//! ### 问题 1: dyld: Library not loaded
 //!
-//! 将 DLL 放在 moho-mate.exe 同目录即可。
+//! ```
+//! dyld: Library not loaded: @executable_path/../Frameworks/libavcodec.61.dylib
+//! ```
 //!
-//! ### 故障排除
+//! **原因**: Frameworks 符号链接不存在
 //!
-//! **错误: "找不到 avfilter-10.dll"**
-//! - 确保 avfilter-10.dll 在 moho-mate.exe 同目录
-//! - 或添加 scripts 目录到 PATH 环境变量
+//! **解决**: 运行 build.sh 或手动创建符号链接
+//! ```bash
+//! cd skills/moho-mate
+//! ln -s /Applications/Moho.app/Contents/Frameworks Frameworks
+//! ```
 //!
-//! **错误: "找不到 avutil-59.dll"**
-//! - 确保 avutil-59.dll 在 moho-mate.exe 同目录
-//! - avfilter-10.dll 依赖 avutil-59.dll
+//! ### 问题 2: 找不到 avfilter-10.dll
 //!
-//! **错误: "avutil-59.dll 版本不兼容"**
-//! - 使用 scripts 目录中的 avutil-59.dll
-//! - 不要使用 Moho 内置的 avutil（版本可能不同）
+//! **原因**: Windows 缺少 DLL 文件
 //!
-//! ## 关键点
-//!
-//! 1. **libavfilter 保留在 scripts 目录**
-//!    - macOS: libavfilter.10.dylib
-//!    - Windows: avfilter-10.dll
-//!    - Moho 没有内置 libavfilter
-//!    - GIF 编码需要 libavfilter（调色板优化）
-//!
-//! 2. **check_avfilter_available() 检查 scripts 目录**
-//!    - macOS: scripts/libavfilter.10.dylib
-//!    - Windows: scripts/avfilter-10.dll
-//!
-//! 3. **无需环境变量**
-//!    - macOS: rpath 在编译时设置（见 build.rs）
-//!    - Windows: PATH 或 DLL 目录
+//! **解决**: 从 scripts 目录复制 avfilter-10.dll 和 avutil-59.dll
 //!
 //! ## 相关文件
 //!
 //! - build.rs: 设置 rpath (macOS)
-//! - build.sh: 执行 install_name_tool (macOS)
-//! - Cargo.toml: ffmpeg-builtin feature
-//!
-//! ## GIF 编码流程
-//!
-//! 1. check_avfilter_available() 检查 libavfilter
-//! 2. encode_gif_with_palette() 使用 libavfilter 调色板优化
-//! 3. 滤镜链: format=rgb24,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse
+//! - build.sh: 创建 Frameworks 符号链接
+//! - ffmpeg_ffi.rs: FFmpeg FFI 绑定
 
 use crate::ipc_core;
 use crate::ffmpeg_ffi as av;

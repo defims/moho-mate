@@ -5,64 +5,88 @@
 #   ./build.sh          # 构建并更新
 #   ./build.sh --test   # 构建并测试
 #
-# 关键步骤:
-#   1. 检查 Frameworks 符号链接
-#   2. cargo build --release
-#   3. 复制到 scripts 目录
+# ⚠️ 关键：Frameworks 符号链接方案
 #
-# ⚠️ 重要：Frameworks 符号链接
+# 这是替代 install_name_tool 的更优雅方案。
 #
-#   moho-mate 使用 Moho 内置 FFmpeg 库，这些库的 install name 是：
-#     @executable_path/../Frameworks/libavcodec.61.dylib
+# ## 背景
 #
-#   为了让 moho-mate 能找到这些库，需要在项目根目录创建 Frameworks 符号链接：
-#     skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks
+# Moho 内置 FFmpeg 库的 install name：
+#   @executable_path/../Frameworks/libavcodec.61.dylib
 #
-#   这样从 moho-mate 的视角：
-#     @executable_path = scripts/
-#     @executable_path/../Frameworks = Frameworks/ -> Moho Frameworks
+# 当 moho-mate 运行时（在 scripts/ 目录）：
+#   @executable_path = scripts/
+#   @executable_path/../Frameworks = skills/moho-mate/Frameworks/
 #
-#   好处：
-#     - 无需 install_name_tool（零二进制修改）
-#     - 无需复制库（省 40MB 空间）
-#     - 编译后直接可用
-#     - 符号链接永久有效（只需创建一次）
+# ## 解决方案
 #
-# 库位置说明:
-#   - macOS:
-#       符号链接: skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks/
-#       内置库: libavcodec.61.dylib, libavformat.61.dylib, avutil.59.dylib 等
-#       scripts 目录: libavfilter.10.dylib（Moho 没有内置）
-#   - Windows:
-#       所有库: avcodec-61.dll, avformat-61.dll 等
-#       位置: Moho 安装目录 或 scripts 目录
-#       加载: 通过 PATH 环境变量或 DLL 目录
-#       avfilter-10.dll 依赖 avutil-59.dll（需一起分发）
+# 在项目根目录创建 Frameworks 符号链接：
+#   skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks
 #
-# 命名差异:
-#   | 平台 | 前缀 | 分隔符 | 后缀 | 示例 |
-#   |------|------|--------|------|------|
-#   | macOS | lib | . | .dylib | libavfilter.10.dylib |
-#   | Windows | 无 | - | .dll | avfilter-10.dll |
-#   | Linux | lib | . | .so.X | libavfilter.so.10 |
+# ## 为什么有效？
 #
-# Windows avfilter-10.dll 获取方式:
-#   已通过交叉编译生成（在 macOS 上使用 MinGW-w64）
-#   - avfilter-10.dll (22 MB)
-#   - avutil-59.dll (3.9 MB)
-#   
-#   交叉编译命令:
-#     ./configure --arch=x86_64 --target-os=mingw64 \
-#       --cross-prefix=x86_64-w64-mingw32- \
-#       --enable-shared --disable-static \
-#       --disable-programs --disable-x86asm \
-#       --enable-avfilter
-#     make -j8
+# 1. 路径自动解析：
+#    @executable_path/../Frameworks/libavcodec.61.dylib
+#    → skills/moho-mate/Frameworks/libavcodec.61.dylib
+#    → /Applications/Moho.app/Contents/Frameworks/libavcodec.61.dylib ✅
 #
-# 相关文件:
-#   - build.rs: 设置 rpath (macOS)
-#   - encode_native.rs: check_avfilter_available() 检查 scripts 目录
-#   - ffmpeg_ffi.rs: FFmpeg FFI 绑定
+# 2. libavfilter 使用 @rpath：
+#    @rpath/libavfilter.10.dylib
+#    rpath 在 build.rs 中设置为 scripts/
+#    → scripts/libavfilter.10.dylib ✅
+#
+# ## 为什么不在 scripts/ 目录创建库符号链接？
+#
+# 因为库之间也有依赖：
+#   libavformat.61.dylib
+#     └── @loader_path/../Frameworks/libavcodec.61.dylib
+#
+#   @loader_path = 当前库所在目录
+#
+# 如果符号链接在 scripts/：
+#   @loader_path/../Frameworks = scripts/../Frameworks = skills/moho-mate/Frameworks
+#
+# 最终还是需要 Frameworks 符号链接，所以在 scripts/ 目录创建库符号链接无效。
+#
+# ## 对比
+#
+# | 方案 | 符号链接数量 | install_name_tool | 用户干预 |
+# |------|-------------|-------------------|--------|
+# | ~~旧方案~~ | 0 | 需要（每次编译） | 无 |
+# | **新方案** | 1（Frameworks） | 不需要 | 一次 |
+#
+# 新方案更优：
+# - 符号链接永久有效
+# - 无需修改二进制
+# - 编译后直接可用
+#
+# ## 库位置
+#
+# macOS:
+#   符号链接: skills/moho-mate/Frameworks -> /Applications/Moho.app/Contents/Frameworks/
+#   内置库: libavcodec.61.dylib, libavformat.61.dylib, libavutil.59.dylib,
+#           libswscale.8.dylib, libswresample.5.dylib
+#   scripts: libavfilter.10.dylib（Moho 没有内置）
+#
+# Windows:
+#   所有库: avcodec-61.dll, avformat-61.dll 等
+#   位置: Moho 安装目录 或 scripts 目录
+#   加载: 通过 PATH 环境变量
+#   avfilter-10.dll 依赖 avutil-59.dll（需一起分发）
+#
+# ## 命名差异
+#
+# | 平台 | 前缀 | 分隔符 | 后缀 | 示例 |
+# |------|------|--------|------|------|
+# | macOS | lib | . | .dylib | libavfilter.10.dylib |
+# | Windows | 无 | - | .dll | avfilter-10.dll |
+# | Linux | lib | . | .so.X | libavfilter.so.10 |
+#
+# ## 相关文件
+#
+# - build.rs: 设置 rpath
+# - encode_native.rs: FFmpeg 编码实现
+# - ffmpeg_ffi.rs: FFmpeg FFI 绑定
 
 set -e
 cd "$(dirname "$0")/moho-mate-src"
