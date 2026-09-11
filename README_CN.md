@@ -37,7 +37,7 @@
 
 | 微信群 | QQ 群 |
 |---|---|
-| <img src="wechat-group.png" width="220"> | <img src="qq-group.png" width="220"> |
+| <img src="wechat-group.jpg" width="220"> | <img src="qq-group.png" width="220"> |
 | Moho Mate 内测群 | moho-mate 内测群（群号 `1012910951`） |
 
 - 二维码 7 天有效（微信当前至 9 月 18 日），过期请喊管理员刷新；QQ 群也可直接搜索群号加入（长期有效）
@@ -45,11 +45,9 @@
 
 ## 反馈
 
-Bug 与建议 → [提交 Issue](https://github.com/defims/moho-mate/issues)，也欢迎加群反馈。请附：
-
-- 版本号（设置页点击复制）
-- 诊断 → 打包日志的 zip
-- 复现步骤
+- 🐛 Bug → [提交 Issue](https://github.com/defims/moho-mate/issues)，请附：版本号（设置页点击复制）、诊断 → 打包日志的 zip、复现步骤
+- 💡 想法与疑问 → [GitHub Discussions](https://github.com/defims/moho-mate/discussions)
+- 💬 闲聊与互助 → 上方「内测交流群」扫码加入
 
 > **隐私说明**：内测版激活后会自动上传诊断日志（仅限诊断信息），以便更快修复问题——如需排除请告知。
 

@@ -33,13 +33,11 @@ English | [中文](README_CN.md)
 
 Invite-only during the beta. Ask the maintainer for a beta code, open **Settings**, paste it, **Activate**. One code covers 2 devices — ask for a rebind when you change machines.
 
-## Feedback
+## Feedback & community
 
-Bugs & ideas → [open an issue](https://github.com/defims/moho-mate/issues). Always include:
-
-- the version number (Settings → click to copy)
-- the log bundle (Settings → Diagnostics → Package Logs)
-- steps to reproduce
+- 🐛 Bugs → [open an issue](https://github.com/defims/moho-mate/issues). Always include: the version number (Settings → click to copy), the log bundle (Settings → Diagnostics → Package Logs), and steps to reproduce
+- 💡 Ideas & questions → [GitHub Discussions](https://github.com/defims/moho-mate/discussions)
+- 💬 Questions & community → [join our Discord](https://discord.gg/WRAg5Wv6F)
 
 > **Privacy note:** the beta includes automatic diagnostic log upload (contents limited to diagnostics) so issues can be fixed faster — tell us if you want yours excluded.
 
